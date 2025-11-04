@@ -1,0 +1,12 @@
+# CLion / IntelliJ
+.idea/
+cmake-build-*/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+Makefile
+cmake_install.cmake
+
+# macOS
+.DS_Store
