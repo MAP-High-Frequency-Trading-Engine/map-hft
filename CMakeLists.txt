@@ -58,36 +58,44 @@ target_link_libraries(orderbook_smoke PRIVATE map_core)
 add_test(NAME orderbook_smoke COMMAND orderbook_smoke)
 
 # ----------------------------------------------------
-# SFML OrderBook viewer (optional, supports SFML 2.6+ and 3.x)
+# Optional SFML OrderBook viewer
 # ----------------------------------------------------
-find_package(SFML REQUIRED COMPONENTS system window graphics)
+option(MAP_BUILD_OB_VIEWER "Build SFML-based order book viewer" OFF)
 
-# Figure out which target names SFML uses (2.6 uses sfml-graphics, 3.x uses SFML::Graphics)
-if (TARGET SFML::Graphics)
-    # SFML 3-style targets
-    set(SFML_GRAPHICS_TARGET SFML::Graphics)
-    set(SFML_WINDOW_TARGET   SFML::Window)
-    set(SFML_SYSTEM_TARGET   SFML::System)
-elseif (TARGET sfml-graphics)
-    # SFML 2.6-style targets
-    set(SFML_GRAPHICS_TARGET sfml-graphics)
-    set(SFML_WINDOW_TARGET   sfml-window)
-    set(SFML_SYSTEM_TARGET   sfml-system)
-else()
-    message(FATAL_ERROR "SFML found but no known targets (SFML::Graphics or sfml-graphics)")
+if (MAP_BUILD_OB_VIEWER)
+    # First, try SFML 3.x with capitalized components
+    find_package(SFML 3 QUIET COMPONENTS Graphics Window System)
+
+    if (SFML_FOUND)
+        # SFML 3 style targets
+        set(SFML_GRAPHICS_TARGET SFML::Graphics)
+        set(SFML_WINDOW_TARGET   SFML::Window)
+        set(SFML_SYSTEM_TARGET   SFML::System)
+    else()
+        # Fallback to SFML 2.x with lowercase components
+        find_package(SFML REQUIRED COMPONENTS system window graphics)
+
+        if (TARGET sfml-graphics)
+            set(SFML_GRAPHICS_TARGET sfml-graphics)
+            set(SFML_WINDOW_TARGET   sfml-window)
+            set(SFML_SYSTEM_TARGET   sfml-system)
+        else()
+            message(FATAL_ERROR "SFML found but no known targets (sfml-graphics or SFML::Graphics)")
+        endif()
+    endif()
+
+    add_executable(ob_viewer
+            ob_viewer.cpp
+    )
+
+    target_link_libraries(ob_viewer
+            PRIVATE
+            map_core
+            ${SFML_GRAPHICS_TARGET}
+            ${SFML_WINDOW_TARGET}
+            ${SFML_SYSTEM_TARGET}
+    )
 endif()
-
-add_executable(ob_viewer
-        ob_viewer.cpp
-)
-target_link_libraries(ob_viewer
-        PRIVATE
-        map_core
-        ${SFML_GRAPHICS_TARGET}
-        ${SFML_WINDOW_TARGET}
-        ${SFML_SYSTEM_TARGET}
-)
-
 
 # ----------------------------------------------------
 # Catch2 unit tests target
