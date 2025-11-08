@@ -1,8 +1,15 @@
+// src/OrderBook.cpp
+
 #include "map/OrderBook.hpp"
 
-#include <algorithm>  // std::min
+#include <algorithm> // std::min
+#include <map>
 
-// Helper: generic matching logic that works for either side
+namespace map {
+
+// -------------------------
+// Helper: generic matcher
+// -------------------------
 template <typename MySideMap, typename OppSideMap>
 static void matchIncomingOrder(
     Order& incoming,
@@ -12,20 +19,26 @@ static void matchIncomingOrder(
     OppSideMap& oppSide,
     std::map<OrderId, std::pair<Side, Price>>& index
 ) {
+    // Try to match against the opposite side while:
+    //  - incoming still has remaining quantity
+    //  - there are resting orders on the opposite side
     while (incoming.remaining.raw() > 0 && !oppSide.empty()) {
-        auto bestIt = oppSide.begin();
+        // Best price level on the opposite side
+        auto bestIt    = oppSide.begin();
         Price bestPrice = bestIt->first;
 
+        // Check if prices cross
         bool crosses = (side == Side::Bid)
-                       ? (bestPrice <= limitPrice)  // bid crosses ask
-                       : (bestPrice >= limitPrice); // ask crosses bid
+            ? (bestPrice <= limitPrice)   // bid crosses ask
+            : (bestPrice >= limitPrice);  // ask crosses bid
 
         if (!crosses) {
-            break;
+            break; // cannot trade further at this price
         }
 
-        auto& queue = bestIt->second;
+        auto& queue = bestIt->second; // LevelQueue& (std::deque<Order>)
 
+        // Match against orders in FIFO order at this price
         while (!queue.empty() && incoming.remaining.raw() > 0) {
             Order& resting = queue.front();
 
@@ -37,29 +50,35 @@ static void matchIncomingOrder(
             incoming.remaining = Quantity{incoming.remaining.raw() - tradedRaw};
             resting.remaining  = Quantity{resting.remaining.raw()  - tradedRaw};
 
-            // (Later) emit Trade event here
+            // (Later) you can emit Trade events here, using tradedRaw and bestPrice
 
             if (resting.remaining.raw() == 0) {
+                // Fully filled resting order: remove from index + queue
                 index.erase(resting.id);
                 queue.pop_front();
             } else {
-                // partially filled resting order stays at front
+                // Partially filled resting order stays at front
                 break;
             }
         }
 
+        // If that price level is now empty, remove the level
         if (queue.empty()) {
             oppSide.erase(bestIt);
         }
     }
 
-    // If still quantity left, rest it on my side
+    // If any quantity remains, rest it on "my side" at limitPrice
     if (incoming.remaining.raw() > 0) {
         auto& levelQueue = mySide[limitPrice];
         levelQueue.push_back(incoming);
         index[incoming.id] = { side, limitPrice };
     }
 }
+
+// -------------------------
+// OrderBook methods
+// -------------------------
 
 OrderBook::OrderBook() = default;
 
@@ -83,48 +102,36 @@ bool OrderBook::cancelOrder(OrderId id) {
 
     auto [side, px] = it->second;
 
+    auto cancelFromSide = [&](auto& sideMap) -> bool {
+        auto levelIt = sideMap.find(px);
+        if (levelIt == sideMap.end()) {
+            // index said it was here but level is gone; clean up
+            index_.erase(it);
+            return false;
+        }
+
+        auto& queue = levelIt->second;
+        for (auto qIt = queue.begin(); qIt != queue.end(); ++qIt) {
+            if (qIt->id.raw() == id.raw()) {
+                // Remove the order from this price level
+                queue.erase(qIt);
+                if (queue.empty()) {
+                    sideMap.erase(levelIt);
+                }
+                index_.erase(it);
+                return true;
+            }
+        }
+
+        // Didn't find order in this level; clean up index entry anyway
+        index_.erase(it);
+        return false;
+    };
+
     if (side == Side::Bid) {
-        auto levelIt = bids_.find(px);
-        if (levelIt == bids_.end()) {
-            index_.erase(it);
-            return false;
-        }
-
-        auto& queue = levelIt->second;
-        for (auto qIt = queue.begin(); qIt != queue.end(); ++qIt) {
-            if (qIt->id.raw() == id.raw()) {
-                queue.erase(qIt);
-                if (queue.empty()) {
-                    bids_.erase(levelIt);
-                }
-                index_.erase(it);
-                return true;
-            }
-        }
-
-        index_.erase(it);
-        return false;
+        return cancelFromSide(bids_);
     } else {
-        auto levelIt = asks_.find(px);
-        if (levelIt == asks_.end()) {
-            index_.erase(it);
-            return false;
-        }
-
-        auto& queue = levelIt->second;
-        for (auto qIt = queue.begin(); qIt != queue.end(); ++qIt) {
-            if (qIt->id.raw() == id.raw()) {
-                queue.erase(qIt);
-                if (queue.empty()) {
-                    asks_.erase(levelIt);
-                }
-                index_.erase(it);
-                return true;
-            }
-        }
-
-        index_.erase(it);
-        return false;
+        return cancelFromSide(asks_);
     }
 }
 
@@ -132,6 +139,8 @@ std::optional<Price> OrderBook::bestBid() const {
     if (bids_.empty()) {
         return std::nullopt;
     }
+    // bids_ is map<Price, LevelQueue, std::greater<Price>>
+    // so begin() is the highest bid
     return bids_.begin()->first;
 }
 
@@ -139,5 +148,35 @@ std::optional<Price> OrderBook::bestAsk() const {
     if (asks_.empty()) {
         return std::nullopt;
     }
+    // asks_ is map<Price, LevelQueue, std::less<Price>>
+    // so begin() is the lowest ask
     return asks_.begin()->first;
 }
+
+std::vector<LevelInfo> OrderBook::snapshot(Side side) const {
+    std::vector<LevelInfo> levels;
+    levels.reserve(32); // arbitrary
+
+    auto buildSideSnapshot = [&](auto const& bookSide) {
+        for (const auto& [price, queue] : bookSide) {
+            std::int64_t sum = 0;
+            for (const auto& o : queue) {
+                sum += o.remaining.raw();
+            }
+            levels.push_back(LevelInfo{
+                price,
+                Quantity{sum}
+            });
+        }
+    };
+
+    if (side == Side::Bid) {
+        buildSideSnapshot(bids_);
+    } else {
+        buildSideSnapshot(asks_);
+    }
+
+    return levels;
+}
+
+} // namespace map

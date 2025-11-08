@@ -1,0 +1,5 @@
+add_test( [==[OrderBook simple matching]==] /Users/avimaslow/CLionProjects/Map/build/unit_tests [==[OrderBook simple matching]==]  )
+set_tests_properties( [==[OrderBook simple matching]==] PROPERTIES WORKING_DIRECTORY /Users/avimaslow/CLionProjects/Map/build)
+add_test( [==[EventBus routes events]==] /Users/avimaslow/CLionProjects/Map/build/unit_tests [==[EventBus routes events]==]  )
+set_tests_properties( [==[EventBus routes events]==] PROPERTIES WORKING_DIRECTORY /Users/avimaslow/CLionProjects/Map/build)
+set( unit_tests_TESTS [==[OrderBook simple matching]==] [==[EventBus routes events]==])

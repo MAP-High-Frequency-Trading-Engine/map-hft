@@ -4,7 +4,7 @@
 #include <unordered_map>
 #include <vector>
 #include <typeindex>
-#include <memory>
+
 #include "map/core/Event.hpp"
 
 namespace map {

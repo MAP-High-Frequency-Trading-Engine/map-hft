@@ -1,13 +1,13 @@
 #pragma once
+
 #include <string>
 #include "map/Types.hpp"
 #include "map/Side.hpp"
 
 namespace map {
 
-    // Base event type (for logging / tagging)
+    // Base type so EventBus can type-erase everything
     struct EventBase {
-        // could add timestamp, seq num later
         virtual ~EventBase() = default;
     };
 
@@ -27,7 +27,7 @@ namespace map {
         std::string symbol;
         OrderId     takerId;
         OrderId     makerId;
-        Side        takerSide; // Bid or Ask
+        Side        takerSide;
         Price       price;
         Quantity    qty;
     };

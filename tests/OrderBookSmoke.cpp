@@ -1,7 +1,11 @@
-#include "map/OrderBook.hpp"
-
 #include <cassert>
 #include <iostream>
+
+#include "map/OrderBook.hpp"
+#include "map/Side.hpp"
+#include "map/Types.hpp"
+
+using namespace map;
 
 int main() {
     {

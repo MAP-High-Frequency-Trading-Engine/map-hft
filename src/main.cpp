@@ -1,10 +1,12 @@
 #include <iostream>
 #include "map/OrderBook.hpp"
+#include "map/Side.hpp"
+#include "map/Types.hpp"
 
 int main() {
-    OrderBook ob;
-    ob.addOrder(Side::Bid, Price{100}, Quantity{10});
-    ob.addOrder(Side::Ask, Price{105}, Quantity{5});
+    map::OrderBook ob;
+    ob.addOrder(map::Side::Bid, map::Price{100}, map::Quantity{10});
+    ob.addOrder(map::Side::Ask, map::Price{105}, map::Quantity{5});
 
     std::cout << "map-hft: OrderBook basic demo\n";
     if (auto b = ob.bestBid()) {

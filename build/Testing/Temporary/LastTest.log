@@ -1,0 +1,59 @@
+Start testing: Nov 08 14:21 EST
+----------------------------------------------------------
+1/3 Testing: OrderBook simple matching
+1/3 Test: OrderBook simple matching
+Command: "/Users/avimaslow/CLionProjects/Map/build/unit_tests" "OrderBook simple matching"
+Directory: /Users/avimaslow/CLionProjects/Map/build
+"OrderBook simple matching" start time: Nov 08 14:21 EST
+Output:
+----------------------------------------------------------
+Filters: "OrderBook simple matching"
+Randomness seeded to: 1290873947
+===============================================================================
+All tests passed (2 assertions in 1 test case)
+
+<end of output>
+Test time =   0.06 sec
+----------------------------------------------------------
+Test Passed.
+"OrderBook simple matching" end time: Nov 08 14:21 EST
+"OrderBook simple matching" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/3 Testing: EventBus routes events
+2/3 Test: EventBus routes events
+Command: "/Users/avimaslow/CLionProjects/Map/build/unit_tests" "EventBus routes events"
+Directory: /Users/avimaslow/CLionProjects/Map/build
+"EventBus routes events" start time: Nov 08 14:21 EST
+Output:
+----------------------------------------------------------
+Filters: "EventBus routes events"
+Randomness seeded to: 348673889
+===============================================================================
+All tests passed (1 assertion in 1 test case)
+
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"EventBus routes events" end time: Nov 08 14:21 EST
+"EventBus routes events" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/3 Testing: orderbook_smoke
+3/3 Test: orderbook_smoke
+Command: "/Users/avimaslow/CLionProjects/Map/build/orderbook_smoke"
+Directory: /Users/avimaslow/CLionProjects/Map/build
+"orderbook_smoke" start time: Nov 08 14:21 EST
+Output:
+----------------------------------------------------------
+OrderBook smoke tests passed
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"orderbook_smoke" end time: Nov 08 14:21 EST
+"orderbook_smoke" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Nov 08 14:21 EST
