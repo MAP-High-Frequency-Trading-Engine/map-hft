@@ -3,23 +3,51 @@
 #include <map>
 #include <deque>
 #include <optional>
-#include "order.hpp"
+#include <vector>
+#include <cstdint>
 
-class OrderBook {
-public:
-    OrderBook();
+#include "map/Types.hpp"
+#include "map/Side.hpp"
+#include "map/Order.hpp"
 
-    OrderId addOrder(Side side, Price px, Quantity qty);
-    bool    cancelOrder(OrderId id);
+namespace map {
 
-    std::optional<Price> bestBid() const;
-    std::optional<Price> bestAsk() const;
+    // One row of the book for visualization / inspection
+    struct LevelInfo {
+        Price    price;
+        Quantity totalQty;
+    };
 
-private:
-    using LevelQueue = std::deque<Order>;
+    class OrderBook {
+    public:
+        OrderBook();
 
-    std::map<Price, LevelQueue, std::greater<Price>> bids_;
-    std::map<Price, LevelQueue, std::less<Price>>    asks_;
-    std::map<OrderId, std::pair<Side, Price>>        index_;
-    std::uint64_t                                    nextId_ = 1;
-};
+        // Add a new limit order, return its assigned OrderId
+        OrderId addOrder(Side side, Price px, Quantity qty);
+
+        // Cancel an existing order by ID. Returns true if it was found & removed.
+        bool cancelOrder(OrderId id);
+
+        // Best prices on each side (nullopt if that side is empty)
+        std::optional<Price> bestBid() const;
+        std::optional<Price> bestAsk() const;
+
+        // Snapshot of one side: sorted by price (bids: high→low, asks: low→high)
+        std::vector<LevelInfo> snapshot(Side side) const;
+
+    private:
+        using LevelQueue = std::deque<Order>;
+
+        // bids_: highest price first
+        std::map<Price, LevelQueue, std::greater<Price>> bids_;
+        // asks_: lowest price first
+        std::map<Price, LevelQueue, std::less<Price>>    asks_;
+
+        // Index: OrderId → (Side, Price) so we can locate + cancel efficiently
+        std::map<OrderId, std::pair<Side, Price>>        index_;
+
+        // Monotonic id generator
+        std::uint64_t                                    nextId_ = 1;
+    };
+
+} // namespace map
