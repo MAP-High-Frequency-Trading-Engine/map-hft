@@ -58,20 +58,36 @@ target_link_libraries(orderbook_smoke PRIVATE map_core)
 add_test(NAME orderbook_smoke COMMAND orderbook_smoke)
 
 # ----------------------------------------------------
-# SFML OrderBook viewer
+# SFML OrderBook viewer (optional, supports SFML 2.6+ and 3.x)
 # ----------------------------------------------------
-find_package(SFML 3 REQUIRED COMPONENTS Graphics Window System)
+find_package(SFML REQUIRED COMPONENTS system window graphics)
+
+# Figure out which target names SFML uses (2.6 uses sfml-graphics, 3.x uses SFML::Graphics)
+if (TARGET SFML::Graphics)
+    # SFML 3-style targets
+    set(SFML_GRAPHICS_TARGET SFML::Graphics)
+    set(SFML_WINDOW_TARGET   SFML::Window)
+    set(SFML_SYSTEM_TARGET   SFML::System)
+elseif (TARGET sfml-graphics)
+    # SFML 2.6-style targets
+    set(SFML_GRAPHICS_TARGET sfml-graphics)
+    set(SFML_WINDOW_TARGET   sfml-window)
+    set(SFML_SYSTEM_TARGET   sfml-system)
+else()
+    message(FATAL_ERROR "SFML found but no known targets (SFML::Graphics or sfml-graphics)")
+endif()
 
 add_executable(ob_viewer
-        ob_viewer.cpp        # adjust to src/ob_viewer.cpp if you move it
+        ob_viewer.cpp
 )
 target_link_libraries(ob_viewer
         PRIVATE
         map_core
-        SFML::Graphics
-        SFML::Window
-        SFML::System
+        ${SFML_GRAPHICS_TARGET}
+        ${SFML_WINDOW_TARGET}
+        ${SFML_SYSTEM_TARGET}
 )
+
 
 # ----------------------------------------------------
 # Catch2 unit tests target
