@@ -96,7 +96,7 @@ ctest --test-dir build --output-on-failure
 ./build/map_hft_main
 ```
  
- ###SFML Order Book Viewer###
+ SFML Order Book Viewer
 
 The SFML-based viewer (ob_viewer.cpp) visualizes the order book:
 
@@ -115,7 +115,7 @@ Run after building:
 ./build/ob_viewer
 ```
 
-### Continuous Integration (CI)###
+### Continuous Integration (CI)
 
 GitHub Actions workflow:   ```bash.github/workflows/ci.yml```
 
