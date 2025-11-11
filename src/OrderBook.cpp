@@ -7,6 +7,7 @@
 #include "map/Side.hpp"
 #include "map/Order.hpp"
 #include "map/core/RiskLimits.hpp"
+#include <stdexcept>
 
 namespace map {
 
