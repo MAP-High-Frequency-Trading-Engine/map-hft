@@ -10,3 +10,8 @@ cmake_install.cmake
 
 # macOS
 .DS_Store
+/build/
+/cmake-build-debug/
+/cmake-build-release/
+events.bin
+.DS_Store
