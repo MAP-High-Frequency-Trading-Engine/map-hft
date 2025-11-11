@@ -1,9 +1,12 @@
 // src/OrderBook.cpp
 
 #include "map/OrderBook.hpp"
-
 #include <algorithm> // std::min
 #include <map>
+#include "map/Types.hpp"
+#include "map/Side.hpp"
+#include "map/Order.hpp"
+#include "map/core/RiskLimits.hpp"
 
 namespace map {
 
@@ -82,17 +85,49 @@ static void matchIncomingOrder(
 
 OrderBook::OrderBook() = default;
 
-OrderId OrderBook::addOrder(Side side, Price px, Quantity qty) {
-    Order incoming{ OrderId{nextId_++}, side, px, qty };
 
-    if (side == Side::Bid) {
-        matchIncomingOrder(incoming, px, side, bids_, asks_, index_);
-    } else {
-        matchIncomingOrder(incoming, px, side, asks_, bids_, index_);
+    std::uint64_t OrderBook::checksum() const {
+        std::uint64_t sum = 0;
+
+        auto foldSide = [&](auto const& sideMap, std::uint64_t salt) {
+            for (const auto& [price, queue] : sideMap) {
+                std::int64_t levelQty = 0;
+                for (const auto& o : queue) {
+                    levelQty += o.remaining.raw();
+                }
+                sum ^= static_cast<std::uint64_t>(price.raw()) * salt
+                     ^ static_cast<std::uint64_t>(levelQty);
+            }
+        };
+
+        foldSide(bids_, 131);
+        foldSide(asks_, 137);
+        return sum;
     }
 
-    return incoming.id;
-}
+    OrderId OrderBook::addOrder(Side side, Price px, Quantity qty) {
+        // basic sanity checks / risk limits
+        if (qty.raw() <= 0) {
+            throw std::invalid_argument("Order quantity must be positive");
+        }
+        if (qty.raw() > RiskLimits::maxOrderQty().raw()) {
+            throw std::runtime_error("Order exceeds max allowed quantity");
+        }
+        if (px.raw() < RiskLimits::minPrice().raw() ||
+            px.raw() > RiskLimits::maxPrice().raw()) {
+            throw std::runtime_error("Price out of allowed range");
+            }
+
+        Order incoming{ OrderId{nextId_++}, side, px, qty };
+
+        if (side == Side::Bid) {
+            matchIncomingOrder(incoming, px, side, bids_, asks_, index_);
+        } else {
+            matchIncomingOrder(incoming, px, side, asks_, bids_, index_);
+        }
+
+        return incoming.id;
+    }
 
 bool OrderBook::cancelOrder(OrderId id) {
     auto it = index_.find(id);

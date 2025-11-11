@@ -35,6 +35,9 @@ namespace map {
         // Snapshot of one side: sorted by price (bids: high→low, asks: low→high)
         std::vector<LevelInfo> snapshot(Side side) const;
 
+        // Deterministic state checksum (for replay verification)
+        std::uint64_t checksum() const;
+
     private:
         using LevelQueue = std::deque<Order>;
 

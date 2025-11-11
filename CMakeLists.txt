@@ -15,22 +15,22 @@ include(FetchContent)
 FetchContent_Declare(
         Catch2
         GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-        GIT_TAG v3.7.0   # any recent v3.x is fine
+        GIT_TAG v3.7.0
 )
 
 FetchContent_MakeAvailable(Catch2)
 
-# Allow CMake to find Catch's extra CMake helpers
 list(APPEND CMAKE_MODULE_PATH ${Catch2_SOURCE_DIR}/extras)
-include(Catch)   # provides catch_discover_tests()
+include(Catch)
 
 # ----------------------------------------------------
 # Core engine library
 # ----------------------------------------------------
 add_library(map_core
-        src/OrderBook.cpp
-        src/core/Logger.cpp
-        # src/core/EventBus.cpp   # EventBus is header-only right now, so no .cpp
+        src/OrderBook.cpp          # <-- your OrderBook is here
+        src/core/Logger.cpp        # <-- logger is in src/core
+        src/replay/LogReader.cpp   # Week 2 replay
+        src/strategy/BasicStrategy.cpp  # Week 2 strategy
 )
 
 target_include_directories(map_core
@@ -39,22 +39,37 @@ target_include_directories(map_core
 )
 
 # ----------------------------------------------------
-# Main demo executable (text-based)
+# Text-based demo / main sample
 # ----------------------------------------------------
 add_executable(map_hft_main
-        src/main.cpp
+        src/main.cpp               # <-- your main is here
 )
 target_link_libraries(map_hft_main PRIVATE map_core)
 
 # ----------------------------------------------------
-# Simple smoke test for the OrderBook (manual assert-based)
+# Live simulation app (Week 2)
+# ----------------------------------------------------
+add_executable(live_sim
+        src/apps/live_sim.cpp
+        include/map/core/RiskLimits.hpp      # ONLY the app source
+)
+target_link_libraries(live_sim PRIVATE map_core)
+
+# ----------------------------------------------------
+# Replay verification app (Week 2)
+# ----------------------------------------------------
+add_executable(replay_test
+        src/apps/replay_test.cpp
+)
+target_link_libraries(replay_test PRIVATE map_core)
+
+# ----------------------------------------------------
+# Simple smoke test for the OrderBook
 # ----------------------------------------------------
 add_executable(orderbook_smoke
         tests/OrderBookSmoke.cpp
 )
 target_link_libraries(orderbook_smoke PRIVATE map_core)
-
-# Register it with CTest
 add_test(NAME orderbook_smoke COMMAND orderbook_smoke)
 
 # ----------------------------------------------------
@@ -63,16 +78,15 @@ add_test(NAME orderbook_smoke COMMAND orderbook_smoke)
 option(MAP_BUILD_OB_VIEWER "Build SFML-based order book viewer" OFF)
 
 if (MAP_BUILD_OB_VIEWER)
-    # First, try SFML 3.x with capitalized components
+    # Try SFML 3.x first
     find_package(SFML 3 QUIET COMPONENTS Graphics Window System)
 
     if (SFML_FOUND)
-        # SFML 3 style targets
         set(SFML_GRAPHICS_TARGET SFML::Graphics)
         set(SFML_WINDOW_TARGET   SFML::Window)
         set(SFML_SYSTEM_TARGET   SFML::System)
     else()
-        # Fallback to SFML 2.x with lowercase components
+        # Fallback to SFML 2.x
         find_package(SFML REQUIRED COMPONENTS system window graphics)
 
         if (TARGET sfml-graphics)
@@ -98,11 +112,12 @@ if (MAP_BUILD_OB_VIEWER)
 endif()
 
 # ----------------------------------------------------
-# Catch2 unit tests target
+# Catch2 unit tests target (includes replay test)
 # ----------------------------------------------------
 add_executable(unit_tests
         tests/test_orderbook.cpp
         tests/test_eventbus.cpp
+        tests/test_replay.cpp
 )
 
 target_link_libraries(unit_tests
@@ -111,5 +126,4 @@ target_link_libraries(unit_tests
         Catch2::Catch2WithMain
 )
 
-# Automatically register all TEST_CASEs in unit_tests with CTest
 catch_discover_tests(unit_tests)

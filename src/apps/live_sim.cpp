@@ -1,68 +1,54 @@
 #include <iostream>
+
+#include "map/core/Event.hpp"
 #include "map/core/EventBus.hpp"
 #include "map/core/Logger.hpp"
 #include "map/OrderBook.hpp"
-#include "map/Side.hpp"
+#include "map/strategy/BasicStrategy.hpp"
 
 using namespace map;
 
 int main() {
-    EventBus bus;
-    Logger   logger("events.bin");
+    const std::string symbol = "TEST";
+
+    EventBus  bus;
+    Logger    logger("events.bin");
     OrderBook book;
 
-    // Subscribe OrderBook to NewOrderEvent + CancelOrderEvent
+    // Wire book to order events
     bus.subscribe<NewOrderEvent>([&](const NewOrderEvent& e) {
-        // For now, we ignore 'symbol' and just use one book
-        auto id = book.addOrder(e.side, e.price, e.qty);
-        std::cout << "Added order id=" << id.raw()
-                  << " side=" << (e.side == Side::Bid ? "Bid" : "Ask")
-                  << " px=" << e.price.raw()
-                  << " qty=" << e.qty.raw()
-                  << "\n";
+        book.addOrder(e.side, e.price, e.qty);
     });
 
     bus.subscribe<CancelOrderEvent>([&](const CancelOrderEvent& e) {
-        bool ok = book.cancelOrder(e.id);
-        std::cout << "Cancel " << e.id.raw()
-                  << (ok ? " OK\n" : " FAILED\n");
+        book.cancelOrder(e.id);
     });
 
-    // Subscribe Logger to all 3 event types
-    bus.subscribe<NewOrderEvent>([&](const NewOrderEvent& e) {
-        logger.log(e);
-    });
-    bus.subscribe<CancelOrderEvent>([&](const CancelOrderEvent& e) {
-        logger.log(e);
-    });
-    bus.subscribe<TradeEvent>([&](const TradeEvent& e) {
-        logger.log(e);
-    });
+    // Wire logger to all events
+    bus.subscribe<NewOrderEvent>([&](const NewOrderEvent& e) { logger.log(e); });
+    bus.subscribe<CancelOrderEvent>([&](const CancelOrderEvent& e) { logger.log(e); });
+    bus.subscribe<TradeEvent>([&](const TradeEvent& e) { logger.log(e); });
 
-    // --- Simple simulation: publish some events ---
+    // Strategy
+    BasicStrategy::Params params;
+    params.basePrice     = Price{100};
+    params.clipSize      = Quantity{5};
+    params.ticksPerOrder = 3;
 
-    NewOrderEvent e1{
-        .symbol = "TEST",
-        .side   = Side::Bid,
-        .price  = Price{100},
-        .qty    = Quantity{10}
-    };
+    BasicStrategy strat(bus, symbol, params);
 
-    NewOrderEvent e2{
-        .symbol = "TEST",
-        .side   = Side::Ask,
-        .price  = Price{105},
-        .qty    = Quantity{5}
-    };
+    // Run a deterministic, fixed-length simulation
+    const std::int64_t ticks = 500;
 
-    bus.publish(e1);
-    bus.publish(e2);
+    for (std::int64_t t = 0; t < ticks; ++t) {
+        strat.onTick(t, book);
+    }
 
-    std::cout << "Best bid: "
-              << (book.bestBid() ? book.bestBid()->raw() : -1)
-              << " | Best ask: "
-              << (book.bestAsk() ? book.bestAsk()->raw() : -1)
-              << "\n";
+    std::cout << "Live sim finished.\n";
+    std::cout << "Best bid: " << (book.bestBid() ? book.bestBid()->raw() : -1) << "\n";
+    std::cout << "Best ask: " << (book.bestAsk() ? book.bestAsk()->raw() : -1) << "\n";
+    std::cout << "Checksum: " << book.checksum() << "\n";
+    std::cout << "Events written to events.bin\n";
 
     return 0;
 }
