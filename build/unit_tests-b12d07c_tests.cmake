@@ -2,4 +2,6 @@ add_test( [==[OrderBook simple matching]==] /Users/avimaslow/CLionProjects/Map/b
 set_tests_properties( [==[OrderBook simple matching]==] PROPERTIES WORKING_DIRECTORY /Users/avimaslow/CLionProjects/Map/build)
 add_test( [==[EventBus routes events]==] /Users/avimaslow/CLionProjects/Map/build/unit_tests [==[EventBus routes events]==]  )
 set_tests_properties( [==[EventBus routes events]==] PROPERTIES WORKING_DIRECTORY /Users/avimaslow/CLionProjects/Map/build)
-set( unit_tests_TESTS [==[OrderBook simple matching]==] [==[EventBus routes events]==])
+add_test( [==[Record + replay produce same book checksum]==] /Users/avimaslow/CLionProjects/Map/build/unit_tests [==[Record + replay produce same book checksum]==]  )
+set_tests_properties( [==[Record + replay produce same book checksum]==] PROPERTIES WORKING_DIRECTORY /Users/avimaslow/CLionProjects/Map/build)
+set( unit_tests_TESTS [==[OrderBook simple matching]==] [==[EventBus routes events]==] [==[Record + replay produce same book checksum]==])

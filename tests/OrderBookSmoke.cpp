@@ -11,8 +11,8 @@ int main() {
     {
         // Scenario 1: No-cross add (bid < ask)
         OrderBook ob;
-        ob.addOrder(Side::Bid, Price{100}, Quantity{10});
-        ob.addOrder(Side::Ask, Price{105}, Quantity{5});
+        ob.addOrder(Side::Bid, Price{100}, Quantity{10}, "TEST");
+        ob.addOrder(Side::Ask, Price{105}, Quantity{5},  "TEST");
 
         assert(ob.bestBid().has_value());
         assert(ob.bestAsk().has_value());
@@ -23,8 +23,8 @@ int main() {
     {
         // Scenario 2: Simple full match (bid == ask)
         OrderBook ob;
-        ob.addOrder(Side::Ask, Price{100}, Quantity{5});
-        ob.addOrder(Side::Bid, Price{100}, Quantity{5});
+        ob.addOrder(Side::Ask, Price{100}, Quantity{5}, "TEST");
+        ob.addOrder(Side::Bid, Price{100}, Quantity{5}, "TEST");
 
         // Book should be empty on both sides
         assert(!ob.bestBid().has_value());
@@ -34,8 +34,8 @@ int main() {
     {
         // Scenario 3: Partial fill
         OrderBook ob;
-        ob.addOrder(Side::Ask, Price{100}, Quantity{10});  // resting 10 @ 100
-        ob.addOrder(Side::Bid, Price{100}, Quantity{4});   // eats 4
+        ob.addOrder(Side::Ask, Price{100}, Quantity{10}, "TEST");  // resting 10 @ 100
+        ob.addOrder(Side::Bid, Price{100}, Quantity{4},  "TEST");  // eats 4
 
         // Ask should still be present at 100
         assert(ob.bestAsk().has_value());

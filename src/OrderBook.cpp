@@ -1,13 +1,15 @@
 // src/OrderBook.cpp
 
 #include "map/OrderBook.hpp"
+
 #include <algorithm> // std::min
 #include <map>
+#include <stdexcept>
+
 #include "map/Types.hpp"
 #include "map/Side.hpp"
 #include "map/Order.hpp"
-#include "map/core/RiskLimits.hpp"
-#include <stdexcept>
+#include "map/risk/RiskLimits.hpp"
 
 namespace map {
 
@@ -21,14 +23,16 @@ static void matchIncomingOrder(
     Side side,
     MySideMap& mySide,
     OppSideMap& oppSide,
-    std::map<OrderId, std::pair<Side, Price>>& index
+    std::map<OrderId, std::pair<Side, Price>>& index,
+    RiskLimits* risk,                  // NEW: risk pointer
+    const std::string& symbol          // NEW: symbol for risk::onTrade
 ) {
     // Try to match against the opposite side while:
     //  - incoming still has remaining quantity
     //  - there are resting orders on the opposite side
     while (incoming.remaining.raw() > 0 && !oppSide.empty()) {
         // Best price level on the opposite side
-        auto bestIt    = oppSide.begin();
+        auto  bestIt    = oppSide.begin();
         Price bestPrice = bestIt->first;
 
         // Check if prices cross
@@ -51,10 +55,17 @@ static void matchIncomingOrder(
                 resting.remaining.raw()
             );
 
+            Quantity tradedQty{tradedRaw};
+
             incoming.remaining = Quantity{incoming.remaining.raw() - tradedRaw};
             resting.remaining  = Quantity{resting.remaining.raw()  - tradedRaw};
 
-            // (Later) you can emit Trade events here, using tradedRaw and bestPrice
+            // ---- Risk update on trade (if enabled) ----
+            if (risk) {
+                // Use incoming side & bestPrice as the trade direction/price.
+                risk->onTrade(symbol, side, bestPrice, tradedQty);
+            }
+            // (Later) you can also emit TradeEvent here for logging / replay.
 
             if (resting.remaining.raw() == 0) {
                 // Fully filled resting order: remove from index + queue
@@ -84,51 +95,53 @@ static void matchIncomingOrder(
 // OrderBook methods
 // -------------------------
 
-OrderBook::OrderBook() = default;
+// Constructor is defined inline in the header now, so no ctor body here.
 
+std::uint64_t OrderBook::checksum() const {
+    std::uint64_t sum = 0;
 
-    std::uint64_t OrderBook::checksum() const {
-        std::uint64_t sum = 0;
-
-        auto foldSide = [&](auto const& sideMap, std::uint64_t salt) {
-            for (const auto& [price, queue] : sideMap) {
-                std::int64_t levelQty = 0;
-                for (const auto& o : queue) {
-                    levelQty += o.remaining.raw();
-                }
-                sum ^= static_cast<std::uint64_t>(price.raw()) * salt
-                     ^ static_cast<std::uint64_t>(levelQty);
+    auto foldSide = [&](auto const& sideMap, std::uint64_t salt) {
+        for (const auto& [price, queue] : sideMap) {
+            std::int64_t levelQty = 0;
+            for (const auto& o : queue) {
+                levelQty += o.remaining.raw();
             }
-        };
+            sum ^= static_cast<std::uint64_t>(price.raw()) * salt
+                 ^ static_cast<std::uint64_t>(levelQty);
+        }
+    };
 
-        foldSide(bids_, 131);
-        foldSide(asks_, 137);
-        return sum;
+    foldSide(bids_, 131);
+    foldSide(asks_, 137);
+    return sum;
+}
+
+OrderId OrderBook::addOrder(Side side, Price px, Quantity qty,
+                            const std::string& symbol) {
+    // basic sanity checks
+    if (qty.raw() <= 0) {
+        throw std::invalid_argument("Order quantity must be positive");
     }
 
-    OrderId OrderBook::addOrder(Side side, Price px, Quantity qty) {
-        // basic sanity checks / risk limits
-        if (qty.raw() <= 0) {
-            throw std::invalid_argument("Order quantity must be positive");
+    // Optional risk checks (if a RiskLimits instance is wired in)
+    if (risk_) {
+        if (!risk_->checkOrder(symbol, side, px, qty)) {
+            // For Week 2, simplest behavior: throw on violation.
+            // You could also emit a reject event or return a sentinel OrderId.
+            throw std::runtime_error("Order rejected by risk limits");
         }
-        if (qty.raw() > RiskLimits::maxOrderQty().raw()) {
-            throw std::runtime_error("Order exceeds max allowed quantity");
-        }
-        if (px.raw() < RiskLimits::minPrice().raw() ||
-            px.raw() > RiskLimits::maxPrice().raw()) {
-            throw std::runtime_error("Price out of allowed range");
-            }
-
-        Order incoming{ OrderId{nextId_++}, side, px, qty };
-
-        if (side == Side::Bid) {
-            matchIncomingOrder(incoming, px, side, bids_, asks_, index_);
-        } else {
-            matchIncomingOrder(incoming, px, side, asks_, bids_, index_);
-        }
-
-        return incoming.id;
     }
+
+    Order incoming{ OrderId{nextId_++}, side, px, qty };
+
+    if (side == Side::Bid) {
+        matchIncomingOrder(incoming, px, side, bids_, asks_, index_, risk_, symbol);
+    } else {
+        matchIncomingOrder(incoming, px, side, asks_, bids_, index_, risk_, symbol);
+    }
+
+    return incoming.id;
+}
 
 bool OrderBook::cancelOrder(OrderId id) {
     auto it = index_.find(id);

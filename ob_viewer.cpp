@@ -1,34 +1,38 @@
 //
-// MAP OrderBook Viewer (SFML 3 compatible)
+// MAP OrderBook Viewer (SFML 3 compatible) - Replay stream version
 //
-// - Dark ladder-style UI
+// - Reads events.bin via LogReader::readNext()
+// - Streams NewOrder/Cancel events into OrderBook over time
 // - Bids (green) on left, asks (red) on right
-// - Volume bars behind sizes
-// - Stats: best bid/ask, mid, spread, orders/sec
-// - Random-walk mid price + continuous random order flow
+// - Shows best bid/ask, mid, spread, orders/sec
 //
 
 #include <SFML/Graphics.hpp>
 #include <algorithm>
+#include <optional>
 #include <random>
 #include <string>
-#include <optional>
+#include <type_traits>
 #include <cstdio>
+#include <iostream>
 
 #include "map/OrderBook.hpp"
 #include "map/Side.hpp"
 #include "map/core/Event.hpp"
-#include "map/core/EventBus.hpp"
-#include "map/core/Logger.hpp"
+#include "map/replay/LogReader.hpp"
+#include "map/risk/RiskLimits.hpp"
 #include "map/Types.hpp"
 
 using map::OrderBook;
 using map::Side;
-using map::EventBus;
 using map::NewOrderEvent;
-using map::Logger;
+using map::CancelOrderEvent;
+using map::TradeEvent;
 using map::Price;
 using map::Quantity;
+using map::RiskConfig;
+using map::RiskLimits;
+using map::LogReader;
 
 static int toInt(Price p)    { return static_cast<int>(p.raw()); }
 static int toInt(Quantity q) { return static_cast<int>(q.raw()); }
@@ -39,57 +43,37 @@ struct Stats {
     double spread        = 0.0;
     int    ordersPerSec  = 0;
     int    ordersThisSec = 0;
+    std::size_t eventsSeen = 0;
+    bool   eof           = false;
     sf::Clock secClock;
 };
 
 int main() {
     // ---------------------------------------------------------------------
-    // Core engine objects
+    // Risk + OrderBook
     // ---------------------------------------------------------------------
-    EventBus bus;
-    Logger   logger("events.bin");
-    OrderBook book;
+    RiskConfig cfg{
+        .maxOrderSize = Quantity{1'000'000},
+        .maxPosition  = Quantity{10'000'000},
+        .maxNotional  = map::Notional{1'000'000'000}
+    };
+    RiskLimits risk(cfg);
+
+    OrderBook book(&risk);
     Stats stats;
 
     // ---------------------------------------------------------------------
-    // EventBus subscriptions
+    // Load events from log (events.bin) via streaming
     // ---------------------------------------------------------------------
-    bus.subscribe<NewOrderEvent>([&](const NewOrderEvent& e) {
-        // Single-symbol book for now
-        book.addOrder(e.side, e.price, e.qty);
-        stats.ordersThisSec++;
-    });
-
-    bus.subscribe<NewOrderEvent>([&](const NewOrderEvent& e) {
-        logger.log(e);
-    });
-
-    // ---------------------------------------------------------------------
-    // Seed the book with some initial depth
-    // ---------------------------------------------------------------------
-    auto seedLevel = [&](Side side, int px, int qty) {
-        NewOrderEvent e;
-        e.symbol = "TEST";
-        e.side   = side;
-        e.price  = Price{px};
-        e.qty    = Quantity{qty};
-        bus.publish(e);
-    };
-
-    for (int i = 0; i < 5; ++i) {
-        seedLevel(Side::Bid, 100 - i, 10 + 3 * i);
-        seedLevel(Side::Ask, 101 + i,  8 + 4 * i);
+    const std::string filename = "events.bin";
+    LogReader reader(filename);
+    if (!reader.good()) {
+        std::cerr << "Failed to open log file: " << filename << "\n";
+        return 1;
     }
 
-    // ---------------------------------------------------------------------
-    // Random order flow
-    // ---------------------------------------------------------------------
-    std::mt19937 rng(std::random_device{}());
-    std::uniform_int_distribution<int> sideDist(0, 1);
-    std::uniform_int_distribution<int> qtyDist(1, 20);
-    std::normal_distribution<double>   midMove(0.0, 0.05); // small random walk
-
-    sf::Clock flowClock;
+    sf::Clock playbackClock;
+    const int msPerEvent = 20; // pacing of playback
 
     auto updateMidFromBook = [&]() {
         auto bb = book.bestBid();
@@ -104,51 +88,26 @@ int main() {
         }
     };
 
-    auto publishRandomOrder = [&]() {
-        // Random walk "market"
-        stats.mid += midMove(rng);
-        if (stats.mid < 1.0) stats.mid = 1.0;
-
-        bool isBid = (sideDist(rng) == 0);
-        Side side  = isBid ? Side::Bid : Side::Ask;
-
-        int pxBase = static_cast<int>(stats.mid + 0.5);
-        std::uniform_int_distribution<int> pxOffset(-3, 3);
-        int px  = pxBase + pxOffset(rng);
-        int qty = qtyDist(rng);
-
-        NewOrderEvent e;
-        e.symbol = "TEST";
-        e.side   = side;
-        e.price  = Price{px};
-        e.qty    = Quantity{qty};
-        bus.publish(e);
-
-        updateMidFromBook();
-    };
-
     updateMidFromBook();
+    stats.secClock.restart();
 
     // ---------------------------------------------------------------------
     // SFML window / font (SFML 3 API)
     // ---------------------------------------------------------------------
     sf::RenderWindow window(
         sf::VideoMode({1100u, 650u}),
-        "MAP HFT - OrderBook Viewer"
+        "MAP HFT - OrderBook Viewer (Replay)"
     );
     window.setFramerateLimit(60);
 
     sf::Font font;
     bool hasFont = font.openFromFile("assets/DejaVuSans.ttf");
 
-    stats.secClock.restart();
-    flowClock.restart();
-
     // ---------------------------------------------------------------------
     // Main loop
     // ---------------------------------------------------------------------
     while (window.isOpen()) {
-        // --- SFML 3 event loop (pollEvent -> std::optional<sf::Event>) ---
+        // --- SFML event loop ---
         while (auto event = window.pollEvent()) {
             if (event->is<sf::Event::Closed>()) {
                 window.close();
@@ -160,19 +119,42 @@ int main() {
                     window.close();
                     break;
                 }
-                if (key->code == sf::Keyboard::Key::Space) {
-                    // Burst of orders on SPACE
-                    for (int i = 0; i < 3; ++i) {
-                        publishRandomOrder();
-                    }
-                }
             }
         }
 
-        // --- Auto-flow: one random order every ~80ms ---
-        if (flowClock.getElapsedTime().asMilliseconds() > 80) {
-            flowClock.restart();
-            publishRandomOrder();
+        // --- Stream next replay events based on playback clock ---
+        if (!stats.eof &&
+            playbackClock.getElapsedTime().asMilliseconds() >= msPerEvent) {
+
+            playbackClock.restart();
+
+            // Same API as replay_test: readNext() returns optional<variant<...>>
+            auto evOpt = reader.readNext();
+            if (!evOpt) {
+                stats.eof = true;  // reached end of log
+            } else {
+                ++stats.eventsSeen;
+
+                std::visit([&](auto&& e) {
+                    using T = std::decay_t<decltype(e)>;
+
+                    if constexpr (std::is_same_v<T, NewOrderEvent>) {
+                        // If NewOrderEvent has .symbol, use it:
+                        book.addOrder(e.side, e.price, e.qty, e.symbol);
+                        // If not, you can temporarily do:
+                        // book.addOrder(e.side, e.price, e.qty, "TEST");
+                        stats.ordersThisSec++;
+                    }
+                    else if constexpr (std::is_same_v<T, CancelOrderEvent>) {
+                        book.cancelOrder(e.id);
+                    }
+                    else if constexpr (std::is_same_v<T, TradeEvent>) {
+                        // No book mutation here; trades are implied by matching.
+                    }
+                }, *evOpt);
+
+                updateMidFromBook();
+            }
         }
 
         // --- Orders/sec stats update ---
@@ -200,7 +182,7 @@ int main() {
             sf::Text title(font);
             title.setCharacterSize(24);
             title.setFillColor(sf::Color(210, 210, 230));
-            title.setString("MAP HFT - OrderBook Viewer");
+            title.setString("MAP HFT - OrderBook Viewer (Replay)");
             title.setPosition({20.f, 10.f});
             window.draw(title);
         }
@@ -216,10 +198,13 @@ int main() {
             char buf[256];
             std::snprintf(
                 buf, sizeof(buf),
-                "Best Bid: %s   Best Ask: %s\nMid: %.2f   Spread: %.2f\nOrders/sec: %d",
+                "Best Bid: %s   Best Ask: %s\nMid: %.2f   Spread: %.2f\n"
+                "Orders/sec: %d\nEvents seen: %zu%s",
                 bbStr.c_str(), baStr.c_str(),
                 stats.mid, stats.spread,
-                stats.ordersPerSec
+                stats.ordersPerSec,
+                stats.eventsSeen,
+                stats.eof ? " (EOF)" : ""
             );
 
             sf::Text statsText(font);
@@ -230,15 +215,18 @@ int main() {
             window.draw(statsText);
         }
 
-        // Ladder layout
-        float ladderTop   = 90.f;
-        float rowHeight   = 24.f;
-        int   maxLevels   = 18;
-        float centerX     = w * 0.52f;
-        float bidQtyX     = centerX - 200.f;
-        float priceX      = centerX - 20.f;
-        float askQtyX     = centerX + 80.f;
-        float barMaxWidth = 150.f;
+// Ladder layout
+
+float ladderTop   = 180.f;   // was 90.f
+float rowHeight   = 24.f;
+int   maxLevels   = 18;
+float centerX     = w * 0.52f;
+float bidQtyX     = centerX - 200.f;
+float priceX      = centerX - 20.f;
+float askQtyX     = centerX + 80.f;
+float barMaxWidth = 150.f;
+
+
 
         // Ladder header
         if (hasFont) {
@@ -343,7 +331,7 @@ int main() {
         {
             sf::RectangleShape line;
             line.setSize({w - 40.f, 1.0f});
-            line.setPosition({20.f, ladderTop - 8.f});
+            line.setPosition({20.f, ladderTop - 5.f});  // small tweak
             line.setFillColor(sf::Color(40, 40, 80));
             window.draw(line);
         }

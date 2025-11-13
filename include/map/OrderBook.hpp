@@ -5,10 +5,12 @@
 #include <optional>
 #include <vector>
 #include <cstdint>
+#include <string>
 
 #include "map/Types.hpp"
 #include "map/Side.hpp"
 #include "map/Order.hpp"
+#include "map/risk/RiskLimits.hpp"
 
 namespace map {
 
@@ -20,10 +22,19 @@ namespace map {
 
     class OrderBook {
     public:
-        OrderBook();
+        // Single constructor; optional risk pointer
+        explicit OrderBook(RiskLimits* risk = nullptr)
+            : risk_(risk)
+        {}
 
-        // Add a new limit order, return its assigned OrderId
-        OrderId addOrder(Side side, Price px, Quantity qty);
+        void setRiskLimits(RiskLimits* risk) { risk_ = risk; }
+
+        // Add a new limit order, return its assigned OrderId.
+        // Default symbol "TEST" so 3-arg calls still compile.
+        OrderId addOrder(Side side,
+                         Price px,
+                         Quantity qty,
+                         const std::string& symbol = "TEST");
 
         // Cancel an existing order by ID. Returns true if it was found & removed.
         bool cancelOrder(OrderId id);
@@ -40,6 +51,8 @@ namespace map {
 
     private:
         using LevelQueue = std::deque<Order>;
+
+        RiskLimits* risk_ = nullptr;  // non-owning, can be null
 
         // bids_: highest price first
         std::map<Price, LevelQueue, std::greater<Price>> bids_;

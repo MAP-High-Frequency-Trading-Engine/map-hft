@@ -1,5 +1,6 @@
 unit_tests_NOT_BUILT-b12d07c 0 0
-orderbook_smoke 3 0.00398104
-OrderBook simple matching 2 0.0290397
-EventBus routes events 2 0.0247008
+orderbook_smoke 4 0.00141473
+OrderBook simple matching 3 0.00676892
+EventBus routes events 3 0.00401331
+Record + replay produce same book checksum 1 0.0129035
 ---

@@ -27,10 +27,11 @@ include(Catch)
 # Core engine library
 # ----------------------------------------------------
 add_library(map_core
-        src/OrderBook.cpp          # <-- your OrderBook is here
-        src/core/Logger.cpp        # <-- logger is in src/core
-        src/replay/LogReader.cpp   # Week 2 replay
-        src/strategy/BasicStrategy.cpp  # Week 2 strategy
+        src/OrderBook.cpp              # OrderBook
+        src/core/Logger.cpp            # Logger
+        src/replay/LogReader.cpp       # Replay
+        src/strategy/BasicStrategy.cpp # Strategy
+        src/risk/RiskLimits.cpp        # ✅ add RiskLimits implementation HERE
 )
 
 target_include_directories(map_core
@@ -42,7 +43,7 @@ target_include_directories(map_core
 # Text-based demo / main sample
 # ----------------------------------------------------
 add_executable(map_hft_main
-        src/main.cpp               # <-- your main is here
+        src/main.cpp
 )
 target_link_libraries(map_hft_main PRIVATE map_core)
 
@@ -50,8 +51,8 @@ target_link_libraries(map_hft_main PRIVATE map_core)
 # Live simulation app (Week 2)
 # ----------------------------------------------------
 add_executable(live_sim
-        src/apps/live_sim.cpp
-        include/map/core/RiskLimits.hpp      # ONLY the app source
+        src/apps/live_sim.cpp          # ✅ ONLY the app source
+        # ❌ remove headers / RiskLimits.cpp from here
 )
 target_link_libraries(live_sim PRIVATE map_core)
 
