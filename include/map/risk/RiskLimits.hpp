@@ -1,61 +1,40 @@
 #pragma once
 
-#include <string>
-#include <unordered_map>
-#include <cstdint>
-
 #include "map/Types.hpp"
 #include "map/Side.hpp"
-#include "map/core/Event.hpp"   // for TradeEvent, etc.
+#include <unordered_map>
+#include <string>
 
 namespace map {
 
-    struct RiskConfig {
-        Quantity maxOrderSize;   // e.g. 1'000
-        Quantity maxPosition;    // e.g. 5'000 (net)
-        Notional maxNotional;    // e.g. 1'000'000
-    };
-
     struct PositionState {
-        Quantity netPosition{};  // long > 0, short < 0
-        Notional netNotional{};  // total traded notional
+        Quantity netQty{0};
+        Notional totalNotional{0};
     };
 
-    /// Simple stateful risk engine tracking per-symbol exposure.
-    /// Not thread-safe; assume single-threaded sim (which you already do).
-    class RiskLimits {
-    public:
-        explicit RiskLimits(RiskConfig cfg);
+    struct RiskLimits {
+        static constexpr Quantity maxOrderQty() {
+            return Quantity{500};
+        }
 
-        /// Check if an order is allowed under current exposure.
-        /// Returns true if allowed, false if it should be rejected.
-        bool checkOrder(
-            const std::string& symbol,
-            Side side,
-            Price price,
-            Quantity qty
-        ) const;
+        static constexpr Quantity maxPositionQty() {
+            return Quantity{1000};
+        }
 
-        /// Update risk state on a trade fill.
-        void onTrade(
-            const std::string& symbol,
-            Side side,
-            Price price,
-            Quantity qty
-        );
+        static constexpr Price minPrice() {
+            return Price{1};
+        }
 
-        /// Expose state for debugging / tests.
-        const PositionState* findPosition(const std::string& symbol) const;
+        static constexpr Price maxPrice() {
+            return Price{1'000'000};
+        }
 
-        const RiskConfig& config() const { return cfg_; }
+        bool checkOrder(const std::string& symbol, Side side, Quantity qty);
+        void onTrade(const std::string& symbol, Side side, Quantity qty, Price price);
+        PositionState getState(const std::string& symbol) const;
 
     private:
-        RiskConfig cfg_;
-        // key: symbol
-        std::unordered_map<std::string, PositionState> positions_;
-
-        Notional computeOrderNotional(Price price, Quantity qty) const;
-        PositionState& getOrCreate(const std::string& symbol);
+        std::unordered_map<std::string, PositionState> state_;
     };
 
 } // namespace map

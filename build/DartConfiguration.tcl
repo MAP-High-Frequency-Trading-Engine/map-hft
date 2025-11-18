@@ -11,7 +11,7 @@ BuildDirectory: /Users/avimaslow/CLionProjects/Map/build
 CostDataFile: 
 
 # Site is something like machine.domain, i.e. pragmatic.crd
-Site: Avis-MBP-3
+Site: Avis-MacBook-Pro-3.local
 
 # Build name is osname-revision-compiler, i.e. Linux-2.4.2-2smp-c++
 BuildName: Darwin-c++

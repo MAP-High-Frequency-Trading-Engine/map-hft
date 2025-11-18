@@ -4,11 +4,14 @@
 // - Reads events.bin via LogReader::readNext()
 // - Streams NewOrder/Cancel events into OrderBook over time
 // - Bids (green) on left, asks (red) on right
-// - Shows best bid/ask, mid, spread, orders/sec, replay checksum, risk panel
+// - Shows best bid/ask, mid, spread, orders/sec, replay checksum
 // - Plus: speed controls, pause/step, hover tooltips, order-size histogram,
 //         and a timeline scrubber for replay progress.
 //
+
 #include <cstdint>
+#include <vector>
+
 #include <SFML/Graphics.hpp>
 #include <algorithm>
 #include <optional>
@@ -24,7 +27,6 @@
 #include "map/Side.hpp"
 #include "map/core/Event.hpp"
 #include "map/replay/LogReader.hpp"
-#include "map/risk/RiskLimits.hpp"
 #include "map/Types.hpp"
 
 using map::OrderBook;
@@ -34,11 +36,17 @@ using map::CancelOrderEvent;
 using map::TradeEvent;
 using map::Price;
 using map::Quantity;
-using map::RiskConfig;
-using map::RiskLimits;
 using map::LogReader;
 
 using DecodedEvent = std::variant<NewOrderEvent, CancelOrderEvent, TradeEvent>;
+
+// Helper for std::visit with multiple lambdas
+template <class... Ts>
+struct Overloaded : Ts... {
+    using Ts::operator()...;
+};
+template <class... Ts>
+Overloaded(Ts...) -> Overloaded<Ts...>;
 
 static int toInt(Price p)    { return static_cast<int>(p.raw()); }
 static int toInt(Quantity q) { return static_cast<int>(q.raw()); }
@@ -57,9 +65,9 @@ struct Stats {
 };
 
 struct UIState {
-    bool  paused         = false;
+    bool  paused          = false;
     float speedMultiplier = 1.0f;   // 1x, up/down arrows to adjust
-    bool  stepOnce       = false;   // single-step when paused
+    bool  stepOnce        = false;  // single-step when paused
 };
 
 struct DebugInfo {
@@ -68,19 +76,15 @@ struct DebugInfo {
 
 int main() {
     // ---------------------------------------------------------------------
-    // Risk + OrderBook
+    // OrderBook + state
     // ---------------------------------------------------------------------
-    RiskConfig cfg{
-        .maxOrderSize = Quantity{1'000'000},
-        .maxPosition  = Quantity{10'000'000},
-        .maxNotional  = map::Notional{1'000'000'000}
-    };
-    RiskLimits risk(cfg);
-
-    OrderBook book(&risk);
-    Stats stats;
-    UIState ui;
+    OrderBook book;
+    Stats     stats;
+    UIState   ui;
     DebugInfo dbg;
+
+    // How many levels down the ladder we are scrolled
+    int ladderOffset = 0;
 
     // Histogram buckets for NewOrder sizes: [1-5], [6-10], [11-20], [21-50], [51+]
     std::array<int, 5> sizeBuckets{};
@@ -93,40 +97,44 @@ int main() {
     };
 
     auto recordEventForDebug = [&](const DecodedEvent& ev) {
-        std::visit([&](auto&& e) {
-            using T = std::decay_t<decltype(e)>;
-            if constexpr (std::is_same_v<T, NewOrderEvent>) {
-    int qraw = toInt(e.qty);
-    sizeBuckets[bucketIndex(qraw)]++;
-    char buf[256];
-    std::snprintf(
-        buf, sizeof(buf),
-        "Last event: NEW | side=%s px=%lld qty=%d",
-        (e.side == Side::Bid ? "Bid" : "Ask"),
-        static_cast<long long>(e.price.raw()),
-        qraw
-    );
-    dbg.lastEventStr = buf;
-}
- else if constexpr (std::is_same_v<T, CancelOrderEvent>) {
-                char buf[256];
-                std::snprintf(
-                    buf, sizeof(buf),
-                    "Last event: CANCEL | id=%lld",
-                    static_cast<long long>(e.id.raw())
-                );
-                dbg.lastEventStr = buf;
-            } else if constexpr (std::is_same_v<T, TradeEvent>) {
-                char buf[256];
-                std::snprintf(
-                    buf, sizeof(buf),
-                    "Last event: TRADE | px=%lld qty=%d",
-                    static_cast<long long>(e.price.raw()),
-                    toInt(e.qty)
-                );
-                dbg.lastEventStr = buf;
-            }
-        }, ev);
+        std::visit(
+            Overloaded{
+                [&](const NewOrderEvent& e) {
+                    int qraw = toInt(e.qty);
+                    sizeBuckets[bucketIndex(qraw)]++;
+
+                    char buf[256];
+                    std::snprintf(
+                        buf, sizeof(buf),
+                        "Last event: NEW | side=%s px=%lld qty=%d",
+                        (e.side == Side::Bid ? "Bid" : "Ask"),
+                        static_cast<long long>(e.price.raw()),
+                        qraw
+                    );
+                    dbg.lastEventStr = buf;
+                },
+                [&](const CancelOrderEvent& e) {
+                    char buf[256];
+                    std::snprintf(
+                        buf, sizeof(buf),
+                        "Last event: CANCEL | id=%lld",
+                        static_cast<long long>(e.id.raw())
+                    );
+                    dbg.lastEventStr = buf;
+                },
+                [&](const TradeEvent& e) {
+                    char buf[256];
+                    std::snprintf(
+                        buf, sizeof(buf),
+                        "Last event: TRADE | px=%lld qty=%d",
+                        static_cast<long long>(e.price.raw()),
+                        toInt(e.qty)
+                    );
+                    dbg.lastEventStr = buf;
+                }
+            },
+            ev
+        );
     };
 
     // ---------------------------------------------------------------------
@@ -139,7 +147,7 @@ int main() {
         return 1;
     }
 
-    // We also store every event in memory so we can scrub back/forward.
+    // Store every event so we can scrub back/forward.
     std::vector<DecodedEvent> history;
     bool historyComplete = false; // set true once we reach EOF at least once
 
@@ -159,32 +167,34 @@ int main() {
         }
     };
 
-    // Rebuild book + risk from scratch up to a given event index
     auto rebuildToIndex = [&](std::size_t targetIdx) {
-        // Reset risk & book and stats
-        risk = RiskLimits(cfg);
-        book = OrderBook(&risk);
-        book.setRiskLimits(&risk);
-
-        stats.eventsSeen    = 0;
-        stats.eof           = false;
+        // Reset book and stats
+        book = OrderBook{};
+        stats.eventsSeen     = 0;
+        stats.eof            = false;
         stats.replayChecksum = 0;
-        stats.checksumValid = false;
-        sizeBuckets = {};
+        stats.checksumValid  = false;
+        sizeBuckets          = {};
         dbg.lastEventStr.clear();
 
         for (std::size_t i = 0; i < targetIdx && i < history.size(); ++i) {
             const DecodedEvent& ev = history[i];
-            std::visit([&](auto&& e) {
-                using T = std::decay_t<decltype(e)>;
-                if constexpr (std::is_same_v<T, NewOrderEvent>) {
-                    book.addOrder(e.side, e.price, e.qty, e.symbol);
-                } else if constexpr (std::is_same_v<T, CancelOrderEvent>) {
-                    book.cancelOrder(e.id);
-                } else if constexpr (std::is_same_v<T, TradeEvent>) {
-                    // no direct book mutation
-                }
-            }, ev);
+
+            std::visit(
+                Overloaded{
+                    [&](const NewOrderEvent& e) {
+                        book.addOrder(e.side, e.price, e.qty, e.symbol);
+                    },
+                    [&](const CancelOrderEvent& e) {
+                        book.cancelOrder(e.id);
+                    },
+                    [&](const TradeEvent&) {
+                        // no direct book mutation
+                    }
+                },
+                ev
+            );
+
             stats.eventsSeen++;
             recordEventForDebug(ev);
         }
@@ -217,13 +227,16 @@ int main() {
     // Main loop
     // ---------------------------------------------------------------------
     while (window.isOpen()) {
-        // --- SFML event loop ---
+        // ==========================
+        // Event handling
+        // ==========================
         while (auto event = window.pollEvent()) {
             if (event->is<sf::Event::Closed>()) {
                 window.close();
                 break;
             }
 
+            // Keyboard controls
             if (const auto* key = event->getIf<sf::Event::KeyPressed>()) {
                 if (key->code == sf::Keyboard::Key::Escape) {
                     window.close();
@@ -255,6 +268,7 @@ int main() {
                     auto mousePos = window.mapPixelToCoords(
                         sf::Vector2i{mbtn->position.x, mbtn->position.y}
                     );
+
                     float w = static_cast<float>(window.getSize().x);
                     float h = static_cast<float>(window.getSize().y);
 
@@ -280,15 +294,29 @@ int main() {
                     }
                 }
             }
-        }
 
-        // --- Stream next replay events based on playback clock ---
+            // Mouse wheel scrolling to move up/down the ladder
+            if (const auto* wheel = event->getIf<sf::Event::MouseWheelScrolled>()) {
+                // Positive delta -> scroll up (toward top of ladder)
+                // Negative delta -> scroll down (deeper into the book)
+                if (wheel->delta > 0) {
+                    ladderOffset -= 1;  // move up
+                } else if (wheel->delta < 0) {
+                    ladderOffset += 1;  // move down
+                }
+            }
+        } // end event loop
+
+        // ==========================
+        // Playback stepping
+        // ==========================
         int effectiveMsPerEvent = static_cast<int>(msPerEventBase / ui.speedMultiplier);
         if (effectiveMsPerEvent < 1) effectiveMsPerEvent = 1;
 
         bool shouldStep =
             !stats.eof &&
-            ( (!ui.paused && playbackClock.getElapsedTime().asMilliseconds() >= effectiveMsPerEvent)
+            ( (!ui.paused &&
+               playbackClock.getElapsedTime().asMilliseconds() >= effectiveMsPerEvent)
               || (ui.paused && ui.stepOnce) );
 
         if (shouldStep) {
@@ -297,49 +325,51 @@ int main() {
 
             auto evOpt = reader.readNext();
             if (!evOpt) {
-                stats.eof           = true;
-                historyComplete     = true;
+                stats.eof            = true;
+                historyComplete      = true;
                 stats.replayChecksum = book.checksum();
-                stats.checksumValid = true;
+                stats.checksumValid  = true;
             } else {
                 DecodedEvent ev = *evOpt;
                 history.push_back(ev);
 
                 ++stats.eventsSeen;
 
-                std::visit([&](auto&& e) {
-                    using T = std::decay_t<decltype(e)>;
-                    if constexpr (std::is_same_v<T, NewOrderEvent>) {
-                        book.addOrder(e.side, e.price, e.qty, e.symbol);
-                        stats.ordersThisSec++;
-                    }
-                    else if constexpr (std::is_same_v<T, CancelOrderEvent>) {
-                        book.cancelOrder(e.id);
-                    }
-                    else if constexpr (std::is_same_v<T, TradeEvent>) {
-                        // No book mutation here; trades are implied by matching.
-                    }
-                }, ev);
+                std::visit(
+                    Overloaded{
+                        [&](const NewOrderEvent& e) {
+                            book.addOrder(e.side, e.price, e.qty, e.symbol);
+                            stats.ordersThisSec++;
+                        },
+                        [&](const CancelOrderEvent& e) {
+                            book.cancelOrder(e.id);
+                        },
+                        [&](const TradeEvent&) {
+                            // No direct book mutation here; trades are implied by matching.
+                        }
+                    },
+                    ev
+                );
 
                 recordEventForDebug(ev);
                 updateMidFromBook();
             }
         }
 
-        // --- Orders/sec stats update ---
+        // Orders/sec stats update
         if (stats.secClock.getElapsedTime().asSeconds() >= 1.0f) {
             stats.ordersPerSec  = stats.ordersThisSec;
             stats.ordersThisSec = 0;
             stats.secClock.restart();
         }
 
-        // --- Snapshot book ---
+        // Snapshot book
         auto bids = book.snapshot(Side::Bid);
         auto asks = book.snapshot(Side::Ask);
 
-        // -----------------------------------------------------------------
+        // ==========================
         // Rendering
-        // -----------------------------------------------------------------
+        // ==========================
         window.clear(sf::Color(8, 10, 20)); // dark background
 
         float w = static_cast<float>(window.getSize().x);
@@ -348,117 +378,6 @@ int main() {
         // Best bid / ask for highlighting & stats
         auto bb = book.bestBid();
         auto ba = book.bestAsk();
-
-        // Title
-        if (hasFont) {
-            sf::Text title(font);
-            title.setCharacterSize(24);
-            title.setFillColor(sf::Color(210, 210, 230));
-            title.setString("MAP HFT - OrderBook Viewer (Replay)");
-            title.setPosition({20.f, 10.f});
-            window.draw(title);
-        }
-
-        // Stats panel (top-right) + replay checksum + speed
-        if (hasFont) {
-            std::string bbStr = bb ? std::to_string(bb->raw()) : "-";
-            std::string baStr = ba ? std::to_string(ba->raw()) : "-";
-            std::string csStr = stats.checksumValid
-                                    ? std::to_string(stats.replayChecksum)
-                                    : "-";
-
-            char buf[512];
-            std::snprintf(
-                buf, sizeof(buf),
-                "Mode: REPLAY  %s\n"
-                "Best Bid: %s   Best Ask: %s\n"
-                "Mid: %.2f   Spread: %.2f\n"
-                "Orders/sec: %d\n"
-                "Events seen: %zu%s\n"
-                "Replay checksum: %s\n"
-                "Speed: %.2fx",
-                ui.paused ? "(PAUSED)" : "",
-                bbStr.c_str(), baStr.c_str(),
-                stats.mid, stats.spread,
-                stats.ordersPerSec,
-                stats.eventsSeen,
-                stats.eof ? " (EOF)" : "",
-                csStr.c_str(),
-                ui.speedMultiplier
-            );
-
-            sf::Text statsText(font);
-            statsText.setCharacterSize(16);
-            statsText.setFillColor(sf::Color(180, 180, 200));
-            statsText.setString(buf);
-            statsText.setPosition({w - 420.f, 20.f});
-            window.draw(statsText);
-        }
-
-        // Risk panel
-        if (hasFont) {
-            const auto* st = risk.findPosition("TEST");
-            if (st) {
-                auto posRaw   = st->netPosition.raw();
-                auto posAbs   = (posRaw < 0 ? -posRaw : posRaw);
-                double ratio  = (cfg.maxPosition.raw() > 0)
-                                  ? static_cast<double>(posAbs) /
-                                        static_cast<double>(cfg.maxPosition.raw())
-                                  : 0.0;
-                if (ratio > 1.0) ratio = 1.0;
-
-                sf::Color barColor;
-                if (ratio < 0.5) {
-                    barColor = sf::Color(0, 200, 0, 200);
-                } else if (ratio < 0.8) {
-                    barColor = sf::Color(230, 200, 0, 220);
-                } else {
-                    barColor = sf::Color(220, 60, 60, 220);
-                }
-
-                float panelX = w - 420.f;
-                float panelY = 150.f;
-                float panelWidth  = 380.f;
-                float panelHeight = 70.f;
-
-                sf::RectangleShape panel;
-                panel.setSize({panelWidth, panelHeight});
-                panel.setPosition({panelX, panelY});
-                panel.setFillColor(sf::Color(15, 18, 40, 200));
-                window.draw(panel);
-
-                float barWidth = panelWidth - 40.f;
-                float barX = panelX + 20.f;
-                float barY = panelY + 35.f;
-                sf::RectangleShape barBg;
-                barBg.setSize({barWidth, 10.f});
-                barBg.setPosition({barX, barY});
-                barBg.setFillColor(sf::Color(40, 45, 80));
-                window.draw(barBg);
-
-                sf::RectangleShape barFill;
-                barFill.setSize({barWidth * static_cast<float>(ratio), 10.f});
-                barFill.setPosition({barX, barY});
-                barFill.setFillColor(barColor);
-                window.draw(barFill);
-
-                sf::Text riskText(font);
-                riskText.setCharacterSize(14);
-                riskText.setFillColor(sf::Color(190, 190, 220));
-
-                char riskBuf[256];
-                std::snprintf(
-                    riskBuf, sizeof(riskBuf),
-                    "Risk: TEST  |  Position: %lld / %lld  |  Notional: %lld",
-                    static_cast<long long>(st->netPosition.raw()),
-                    static_cast<long long>(cfg.maxPosition.raw()),
-                    static_cast<long long>(st->netNotional.raw())
-                );
-                riskText.setString(riskBuf);
-                riskText.setPosition({panelX + 20.f, panelY + 10.f});
-                window.draw(riskText);
-            }
-        }
 
         // Ladder layout
         float ladderTop   = 200.f;
@@ -469,16 +388,6 @@ int main() {
         float priceX      = centerX - 20.f;
         float askQtyX     = centerX + 80.f;
         float barMaxWidth = 150.f;
-
-        // Ladder header
-        if (hasFont) {
-            sf::Text hdr(font);
-            hdr.setCharacterSize(18);
-            hdr.setFillColor(sf::Color(160, 160, 200));
-            hdr.setString("Bids                    Price                    Asks");
-            hdr.setPosition({bidQtyX - 20.f, ladderTop - 30.f});
-            window.draw(hdr);
-        }
 
         // Max qty for bar scaling
         int maxQty = 1;
@@ -514,13 +423,11 @@ int main() {
 
             auto alphaForPrice = [&](Price p) -> std::uint8_t {
                 double dist = std::abs(static_cast<double>(p.raw()) - midVal);
-                // fade after 5 ticks; clamp between ~70 and 255
                 double fade = std::max(0.0, 1.0 - dist / 10.0);
                 int a = static_cast<int>(70 + fade * 185.0);
                 if (a < 50) a = 50;
                 if (a > 255) a = 255;
-               return static_cast<std::uint8_t>(a);
-
+                return static_cast<std::uint8_t>(a);
             };
 
             // Volume bars
@@ -584,13 +491,82 @@ int main() {
             }
         };
 
+        // Title
+        if (hasFont) {
+            sf::Text title(font);
+            title.setCharacterSize(24);
+            title.setFillColor(sf::Color(210, 210, 230));
+            title.setString("MAP HFT - OrderBook Viewer (Replay)");
+            title.setPosition({20.f, 10.f});
+            window.draw(title);
+        }
+
+        // Stats panel (top-right) + replay checksum + speed
+        if (hasFont) {
+            std::string bbStr = bb ? std::to_string(bb->raw()) : "-";
+            std::string baStr = ba ? std::to_string(ba->raw()) : "-";
+            std::string csStr = stats.checksumValid
+                                    ? std::to_string(stats.replayChecksum)
+                                    : "-";
+
+            char buf[512];
+            std::snprintf(
+                buf, sizeof(buf),
+                "Mode: REPLAY  %s\n"
+                "Best Bid: %s   Best Ask: %s\n"
+                "Mid: %.2f   Spread: %.2f\n"
+                "Orders/sec: %d\n"
+                "Events seen: %zu%s\n"
+                "Replay checksum: %s\n"
+                "Speed: %.2fx",
+                ui.paused ? "(PAUSED)" : "",
+                bbStr.c_str(), baStr.c_str(),
+                stats.mid, stats.spread,
+                stats.ordersPerSec,
+                stats.eventsSeen,
+                stats.eof ? " (EOF)" : "",
+                csStr.c_str(),
+                ui.speedMultiplier
+            );
+
+            sf::Text statsText(font);
+            statsText.setCharacterSize(16);
+            statsText.setFillColor(sf::Color(180, 180, 200));
+            statsText.setString(buf);
+            statsText.setPosition({w - 420.f, 20.f});
+            window.draw(statsText);
+        }
+
+        // Ladder header
+        if (hasFont) {
+            sf::Text hdr(font);
+            hdr.setCharacterSize(18);
+            hdr.setFillColor(sf::Color(160, 160, 200));
+            hdr.setString("Bids                    Price                    Asks");
+            hdr.setPosition({bidQtyX - 20.f, ladderTop - 30.f});
+            window.draw(hdr);
+        }
+
+        // Compute depths and clamp ladderOffset
         int bidCount = static_cast<int>(bids.size());
         int askCount = static_cast<int>(asks.size());
-        int rows     = std::min(maxLevels, std::max(bidCount, askCount));
+        int maxDepth = std::max(bidCount, askCount);
+        int rows     = std::min(maxLevels, maxDepth);
 
+        int maxOffset = std::max(0, maxDepth - rows);
+        if (ladderOffset < 0)          ladderOffset = 0;
+        if (ladderOffset > maxOffset)  ladderOffset = maxOffset;
+
+        // Draw ladder rows
         for (int i = 0; i < rows; ++i) {
-            const map::LevelInfo* bidLvl = (i < bidCount) ? &bids[i] : nullptr;
-            const map::LevelInfo* askLvl = (i < askCount) ? &asks[i] : nullptr;
+            int bidIndex = i + ladderOffset;
+            int askIndex = i + ladderOffset;
+
+            const map::LevelInfo* bidLvl =
+                (bidIndex < bidCount) ? &bids[bidIndex] : nullptr;
+            const map::LevelInfo* askLvl =
+                (askIndex < askCount) ? &asks[askIndex] : nullptr;
+
             float y = ladderTop + static_cast<float>(i) * rowHeight;
             drawLevelRow(bidLvl, askLvl, y);
         }
@@ -731,16 +707,23 @@ int main() {
             window.draw(eofText);
         }
 
-        // Hover tooltip for ladder row under mouse
+        // -----------------------------------------------------------------
+        // Ladder hover tooltip
+        // -----------------------------------------------------------------
         if (hasFont) {
             auto mpx = sf::Mouse::getPosition(window);
             auto m   = window.mapPixelToCoords(mpx);
+
             float ladderBottom = ladderTop + rows * rowHeight;
             if (m.y >= ladderTop && m.y <= ladderBottom) {
                 int row = static_cast<int>((m.y - ladderTop) / rowHeight);
                 if (row >= 0 && row < rows) {
-                    const map::LevelInfo* bidLvl = (row < bidCount) ? &bids[row] : nullptr;
-                    const map::LevelInfo* askLvl = (row < askCount) ? &asks[row] : nullptr;
+                    int idx = row + ladderOffset;
+
+                    const map::LevelInfo* bidLvl =
+                        (idx < bidCount) ? &bids[idx] : nullptr;
+                    const map::LevelInfo* askLvl =
+                        (idx < askCount) ? &asks[idx] : nullptr;
 
                     if (bidLvl || askLvl) {
                         std::string tip;
@@ -761,16 +744,15 @@ int main() {
 
                         sf::RectangleShape tbg;
                         auto bounds = tt.getLocalBounds();
-float pad = 6.f;
-float bx  = m.x + 12.f;
-float by  = m.y - 10.f;
+                        float pad = 6.f;
+                        float bx  = m.x + 12.f;
+                        float by  = m.y - 10.f;
 
-float bw = bounds.size.x;
-float bh = bounds.size.y;
+                        float bw = bounds.size.x;
+                        float bh = bounds.size.y;
 
-tbg.setSize({bw + 2 * pad, bh + 2 * pad});
-tbg.setPosition({bx, by});
-
+                        tbg.setSize({bw + 2 * pad, bh + 2 * pad});
+                        tbg.setPosition({bx, by});
                         tbg.setFillColor(sf::Color(20, 20, 40, 220));
                         window.draw(tbg);
 

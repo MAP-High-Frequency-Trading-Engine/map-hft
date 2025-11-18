@@ -1,231 +1,283 @@
-// src/OrderBook.cpp
-
 #include "map/OrderBook.hpp"
 
-#include <algorithm> // std::min
-#include <map>
+#include <iostream>
+#include <algorithm>
+#include <functional>
 #include <stdexcept>
-
-#include "map/Types.hpp"
-#include "map/Side.hpp"
-#include "map/Order.hpp"
-#include "map/risk/RiskLimits.hpp"
 
 namespace map {
 
-// -------------------------
-// Helper: generic matcher
-// -------------------------
-template <typename MySideMap, typename OppSideMap>
-static void matchIncomingOrder(
-    Order& incoming,
-    Price limitPrice,
-    Side side,
-    MySideMap& mySide,
-    OppSideMap& oppSide,
-    std::map<OrderId, std::pair<Side, Price>>& index,
-    RiskLimits* risk,                  // NEW: risk pointer
-    const std::string& symbol          // NEW: symbol for risk::onTrade
-) {
-    // Try to match against the opposite side while:
-    //  - incoming still has remaining quantity
-    //  - there are resting orders on the opposite side
-    while (incoming.remaining.raw() > 0 && !oppSide.empty()) {
-        // Best price level on the opposite side
-        auto  bestIt    = oppSide.begin();
-        Price bestPrice = bestIt->first;
-
-        // Check if prices cross
-        bool crosses = (side == Side::Bid)
-            ? (bestPrice <= limitPrice)   // bid crosses ask
-            : (bestPrice >= limitPrice);  // ask crosses bid
-
-        if (!crosses) {
-            break; // cannot trade further at this price
+    // --- OrderBook::addOrder ---
+    OrderId OrderBook::addOrder(Side side,
+                                Price px,
+                                Quantity qty,
+                                const std::string& symbol)
+    {
+        // 1. Sanity check
+        if (qty.raw() <= 0 || px.raw() <= 0) {
+            std::cerr << "ERR: Invalid qty or px for new order." << std::endl;
+            return OrderId{0};
         }
 
-        auto& queue = bestIt->second; // LevelQueue& (std::deque<Order>)
+        // 2. Optional risk check (currently disabled)
+        // if (risk_ && !risk_->checkOrder(symbol, side, px, qty)) {
+        //     std::cerr << "RISK REJECT for new order\n";
+        //     return OrderId{0};
+        // }
 
-        // Match against orders in FIFO order at this price
-        while (!queue.empty() && incoming.remaining.raw() > 0) {
-            Order& resting = queue.front();
+        // 3. Generate a new OrderId
+        OrderId newId = OrderId{nextId_++};
 
-            auto tradedRaw = std::min(
-                incoming.remaining.raw(),
-                resting.remaining.raw()
-            );
+        // Remaining qty to be (possibly) matched + rested
+        Quantity remaining = qty;
 
-            Quantity tradedQty{tradedRaw};
+        // 4. Simple price-time matching
+        auto matchAgainst = [&](auto& aggressorRemaining,
+                                Side aggressorSide,
+                                Price aggressorPx) {
+            // For Bid: match vs asks_ (lowest ask first, price <= bid px)
+            // For Ask: match vs bids_ (highest bid first, price >= ask px)
+            if (aggressorSide == Side::Bid) {
+                // match against asks_
+                while (aggressorRemaining.raw() > 0 && !asks_.empty()) {
+                    auto bestAskIt = asks_.begin(); // lowest ask
+                    Price bestAskPx = bestAskIt->first;
+                    if (bestAskPx.raw() > aggressorPx.raw()) {
+                        break; // no more crossing prices
+                    }
 
-            incoming.remaining = Quantity{incoming.remaining.raw() - tradedRaw};
-            resting.remaining  = Quantity{resting.remaining.raw()  - tradedRaw};
+                    auto& queue = bestAskIt->second;
+                    while (aggressorRemaining.raw() > 0 && !queue.empty()) {
+                        Order& resting = queue.front();
+                        Quantity restingQty = resting.qty;
 
-            // ---- Risk update on trade (if enabled) ----
-            if (risk) {
-                // Use incoming side & bestPrice as the trade direction/price.
-                risk->onTrade(symbol, side, bestPrice, tradedQty);
-            }
-            // (Later) you can also emit TradeEvent here for logging / replay.
+                        if (restingQty.raw() <= aggressorRemaining.raw()) {
+                            // Full fill of resting order
+                            aggressorRemaining =
+                                Quantity{aggressorRemaining.raw() - restingQty.raw()};
 
-            if (resting.remaining.raw() == 0) {
-                // Fully filled resting order: remove from index + queue
-                index.erase(resting.id);
-                queue.pop_front();
-            } else {
-                // Partially filled resting order stays at front
-                break;
-            }
-        }
+                            // Remove from index and queue
+                            index_.erase(resting.id);
+                            queue.pop_front();
+                        } else {
+                            // Partial fill of resting order
+                            resting.qty = Quantity{
+                                restingQty.raw() - aggressorRemaining.raw()
+                            };
+                            aggressorRemaining = Quantity{0};
+                        }
+                    }
 
-        // If that price level is now empty, remove the level
-        if (queue.empty()) {
-            oppSide.erase(bestIt);
-        }
-    }
-
-    // If any quantity remains, rest it on "my side" at limitPrice
-    if (incoming.remaining.raw() > 0) {
-        auto& levelQueue = mySide[limitPrice];
-        levelQueue.push_back(incoming);
-        index[incoming.id] = { side, limitPrice };
-    }
-}
-
-// -------------------------
-// OrderBook methods
-// -------------------------
-
-// Constructor is defined inline in the header now, so no ctor body here.
-
-std::uint64_t OrderBook::checksum() const {
-    std::uint64_t sum = 0;
-
-    auto foldSide = [&](auto const& sideMap, std::uint64_t salt) {
-        for (const auto& [price, queue] : sideMap) {
-            std::int64_t levelQty = 0;
-            for (const auto& o : queue) {
-                levelQty += o.remaining.raw();
-            }
-            sum ^= static_cast<std::uint64_t>(price.raw()) * salt
-                 ^ static_cast<std::uint64_t>(levelQty);
-        }
-    };
-
-    foldSide(bids_, 131);
-    foldSide(asks_, 137);
-    return sum;
-}
-
-OrderId OrderBook::addOrder(Side side, Price px, Quantity qty,
-                            const std::string& symbol) {
-    // basic sanity checks
-    if (qty.raw() <= 0) {
-        throw std::invalid_argument("Order quantity must be positive");
-    }
-
-    // Optional risk checks (if a RiskLimits instance is wired in)
-    if (risk_) {
-        if (!risk_->checkOrder(symbol, side, px, qty)) {
-            // For Week 2, simplest behavior: throw on violation.
-            // You could also emit a reject event or return a sentinel OrderId.
-            throw std::runtime_error("Order rejected by risk limits");
-        }
-    }
-
-    Order incoming{ OrderId{nextId_++}, side, px, qty };
-
-    if (side == Side::Bid) {
-        matchIncomingOrder(incoming, px, side, bids_, asks_, index_, risk_, symbol);
-    } else {
-        matchIncomingOrder(incoming, px, side, asks_, bids_, index_, risk_, symbol);
-    }
-
-    return incoming.id;
-}
-
-bool OrderBook::cancelOrder(OrderId id) {
-    auto it = index_.find(id);
-    if (it == index_.end()) {
-        return false; // no such order
-    }
-
-    auto [side, px] = it->second;
-
-    auto cancelFromSide = [&](auto& sideMap) -> bool {
-        auto levelIt = sideMap.find(px);
-        if (levelIt == sideMap.end()) {
-            // index said it was here but level is gone; clean up
-            index_.erase(it);
-            return false;
-        }
-
-        auto& queue = levelIt->second;
-        for (auto qIt = queue.begin(); qIt != queue.end(); ++qIt) {
-            if (qIt->id.raw() == id.raw()) {
-                // Remove the order from this price level
-                queue.erase(qIt);
-                if (queue.empty()) {
-                    sideMap.erase(levelIt);
+                    if (queue.empty()) {
+                        asks_.erase(bestAskIt);
+                    }
                 }
-                index_.erase(it);
-                return true;
+            } else {
+                // aggressorSide == Ask → match against bids_
+                while (aggressorRemaining.raw() > 0 && !bids_.empty()) {
+                    auto bestBidIt = bids_.begin(); // highest bid
+                    Price bestBidPx = bestBidIt->first;
+                    if (bestBidPx.raw() < aggressorPx.raw()) {
+                        break; // no more crossing prices
+                    }
+
+                    auto& queue = bestBidIt->second;
+                    while (aggressorRemaining.raw() > 0 && !queue.empty()) {
+                        Order& resting = queue.front();
+                        Quantity restingQty = resting.qty;
+
+                        if (restingQty.raw() <= aggressorRemaining.raw()) {
+                            // Full fill
+                            aggressorRemaining =
+                                Quantity{aggressorRemaining.raw() - restingQty.raw()};
+
+                            index_.erase(resting.id);
+                            queue.pop_front();
+                        } else {
+                            // Partial fill
+                            resting.qty = Quantity{
+                                restingQty.raw() - aggressorRemaining.raw()
+                            };
+                            aggressorRemaining = Quantity{0};
+                        }
+                    }
+
+                    if (queue.empty()) {
+                        bids_.erase(bestBidIt);
+                    }
+                }
+            }
+        };
+
+        // Do the matching pass
+        matchAgainst(remaining, side, px);
+
+        // 5. If anything remains, rest it in the book
+        if (remaining.raw() > 0) {
+            Order resting{newId, symbol, side, px, remaining};
+
+            LevelQueue& levelQueue =
+                (side == Side::Bid) ? bids_[px] : asks_[px];
+            levelQueue.push_back(resting);
+            index_[newId] = {side, px};
+        } else {
+            // If fully filled, we don't actually rest the order in the book.
+            // The OrderId is still returned (could be used to log a trade).
+        }
+
+        return newId;
+    }
+
+    // --- OrderBook::cancelOrder ---
+    bool OrderBook::cancelOrder(OrderId id) {
+        auto it = index_.find(id);
+        if (it == index_.end()) {
+            return false; // Not found
+        }
+
+        Side  side = it->second.first;
+        Price px   = it->second.second;
+
+        if (side == Side::Bid) {
+            auto levelIt = bids_.find(px);
+            if (levelIt != bids_.end()) {
+                auto& queue = levelIt->second;
+                auto orderIt = std::find_if(
+                    queue.begin(), queue.end(),
+                    [&id](const Order& o) { return o.id.raw() == id.raw(); });
+
+                if (orderIt != queue.end()) {
+                    queue.erase(orderIt);
+                    if (queue.empty()) {
+                        bids_.erase(levelIt);
+                    }
+                }
+            }
+        } else { // Side::Ask
+            auto levelIt = asks_.find(px);
+            if (levelIt != asks_.end()) {
+                auto& queue = levelIt->second;
+                auto orderIt = std::find_if(
+                    queue.begin(), queue.end(),
+                    [&id](const Order& o) { return o.id.raw() == id.raw(); });
+
+                if (orderIt != queue.end()) {
+                    queue.erase(orderIt);
+                    if (queue.empty()) {
+                        asks_.erase(levelIt);
+                    }
+                }
             }
         }
 
-        // Didn't find order in this level; clean up index entry anyway
         index_.erase(it);
-        return false;
-    };
-
-    if (side == Side::Bid) {
-        return cancelFromSide(bids_);
-    } else {
-        return cancelFromSide(asks_);
+        return true;
     }
-}
 
-std::optional<Price> OrderBook::bestBid() const {
-    if (bids_.empty()) {
-        return std::nullopt;
+    // --- OrderBook::bestBid / bestAsk ---
+    std::optional<Price> OrderBook::bestBid() const {
+        if (bids_.empty()) return std::nullopt;
+        return bids_.begin()->first;
     }
-    // bids_ is map<Price, LevelQueue, std::greater<Price>>
-    // so begin() is the highest bid
-    return bids_.begin()->first;
-}
 
-std::optional<Price> OrderBook::bestAsk() const {
-    if (asks_.empty()) {
-        return std::nullopt;
+    std::optional<Price> OrderBook::bestAsk() const {
+        if (asks_.empty()) return std::nullopt;
+        return asks_.begin()->first;
     }
-    // asks_ is map<Price, LevelQueue, std::less<Price>>
-    // so begin() is the lowest ask
-    return asks_.begin()->first;
-}
 
-std::vector<LevelInfo> OrderBook::snapshot(Side side) const {
-    std::vector<LevelInfo> levels;
-    levels.reserve(32); // arbitrary
+    // --- OrderBook::snapshot ---
+    std::vector<LevelInfo> OrderBook::snapshot(Side side) const {
+        std::vector<LevelInfo> levels;
 
-    auto buildSideSnapshot = [&](auto const& bookSide) {
-        for (const auto& [price, queue] : bookSide) {
-            std::int64_t sum = 0;
-            for (const auto& o : queue) {
-                sum += o.remaining.raw();
+        if (side == Side::Bid) {
+            for (const auto& [price, queue] : bids_) {
+                Quantity totalQty{0};
+                for (const auto& order : queue) {
+                    totalQty = Quantity{ totalQty.raw() + order.qty.raw() };
+                }
+                levels.push_back({price, totalQty});
             }
-            levels.push_back(LevelInfo{
-                price,
-                Quantity{sum}
-            });
+        } else {
+            for (const auto& [price, queue] : asks_) {
+                Quantity totalQty{0};
+                for (const auto& order : queue) {
+                    totalQty = Quantity{ totalQty.raw() + order.qty.raw() };
+                }
+                levels.push_back({price, totalQty});
+            }
         }
-    };
 
-    if (side == Side::Bid) {
-        buildSideSnapshot(bids_);
-    } else {
-        buildSideSnapshot(asks_);
+        return levels;
     }
 
-    return levels;
-}
+    // --- NEW: totalDepth (used by intent engine) ---
+    Quantity OrderBook::totalDepth(Side side, int maxLevels) const {
+        Quantity total{0};
+        int levelCount = 0;
+
+        if (side == Side::Bid) {
+            for (const auto& [price, queue] : bids_) {
+                (void)price;
+                if (maxLevels > 0 && levelCount >= maxLevels) break;
+
+                for (const auto& order : queue) {
+                    total = Quantity{ total.raw() + order.qty.raw() };
+                }
+                ++levelCount;
+            }
+        } else {
+            for (const auto& [price, queue] : asks_) {
+                (void)price;
+                if (maxLevels > 0 && levelCount >= maxLevels) break;
+
+                for (const auto& order : queue) {
+                    total = Quantity{ total.raw() + order.qty.raw() };
+                }
+                ++levelCount;
+            }
+        }
+
+        return total;
+    }
+
+    // --- NEW: orderImbalance ([-1, 1]) ---
+    double OrderBook::orderImbalance(int maxLevels) const {
+        Quantity bidDepth = totalDepth(Side::Bid, maxLevels);
+        Quantity askDepth = totalDepth(Side::Ask, maxLevels);
+
+        double b = static_cast<double>(bidDepth.raw());
+        double a = static_cast<double>(askDepth.raw());
+
+        double denom = b + a;
+        if (denom == 0.0) {
+            return 0.0; // no liquidity on either side
+        }
+        return (b - a) / denom; // -1 (all asks) to +1 (all bids)
+    }
+
+    // --- OrderBook::checksum ---
+    std::uint64_t OrderBook::checksum() const {
+        std::uint64_t hash = 0;
+
+        // Bids checksum
+        for (const auto& [price, queue] : bids_) {
+            hash ^= static_cast<std::uint64_t>(price.raw());
+            for (const auto& order : queue) {
+                hash += order.id.raw();
+                hash += static_cast<std::uint64_t>(order.qty.raw());
+            }
+        }
+
+        // Asks checksum
+        for (const auto& [price, queue] : asks_) {
+            hash ^= static_cast<std::uint64_t>(price.raw());
+            for (const auto& order : queue) {
+                hash += order.id.raw();
+                hash += static_cast<std::uint64_t>(order.qty.raw());
+            }
+        }
+
+        return hash;
+    }
 
 } // namespace map

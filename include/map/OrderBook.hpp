@@ -22,32 +22,31 @@ namespace map {
 
     class OrderBook {
     public:
-        // Single constructor; optional risk pointer
         explicit OrderBook(RiskLimits* risk = nullptr)
             : risk_(risk)
         {}
 
         void setRiskLimits(RiskLimits* risk) { risk_ = risk; }
 
-        // Add a new limit order, return its assigned OrderId.
-        // Default symbol "TEST" so 3-arg calls still compile.
         OrderId addOrder(Side side,
                          Price px,
                          Quantity qty,
                          const std::string& symbol = "TEST");
 
-        // Cancel an existing order by ID. Returns true if it was found & removed.
         bool cancelOrder(OrderId id);
 
-        // Best prices on each side (nullopt if that side is empty)
         std::optional<Price> bestBid() const;
         std::optional<Price> bestAsk() const;
 
-        // Snapshot of one side: sorted by price (bids: high→low, asks: low→high)
         std::vector<LevelInfo> snapshot(Side side) const;
 
-        // Deterministic state checksum (for replay verification)
+        // NEW:
+        Quantity totalDepth(Side side, int maxLevels = 0) const;
+        double   orderImbalance(int maxLevels = 3) const;
+
         std::uint64_t checksum() const;
+
+
 
     private:
         using LevelQueue = std::deque<Order>;

@@ -1,41 +1,37 @@
 #pragma once
 
 #include <cstdint>
-#include <compare>
 
 namespace map {
 
+    // Base template for strong typedefs.
+    // T is the underlying type (e.g., std::uint64_t)
+    // Tag is a unique struct used for compile-time differentiation (e.g., OrderIdTag)
     template <typename Tag, typename T>
     struct Strong {
-        T value;
+        T value{};
+
+        // FIX: The explicit constructor prevents implicit conversion,
+        // which is what caused the first two errors.
         constexpr explicit Strong(T v = {}) : value(v) {}
+
+        // Add implicit conversion operator to get the raw value, if needed
         constexpr T raw() const { return value; }
-        auto operator<=>(const Strong&) const = default;
+
+        // Comparison operators for use in std::map/set
+        auto operator<=>(const Strong& other) const = default;
     };
 
+    // --- Type Tags ---
+    struct OrderIdTag {};
     struct PriceTag {};
     struct QuantityTag {};
-    struct NotionalTag {};
-    struct OrderIdTag {};
+    struct NotionalTag {}; // Added Notional Tag
 
-    using Price    = Strong<PriceTag,   std::int64_t>;
-    using Quantity = Strong<QuantityTag,std::int64_t>;
-    using Notional = Strong<NotionalTag,std::int64_t>;
+    // --- Strong Typedefs ---
     using OrderId  = Strong<OrderIdTag, std::uint64_t>;
-
-    // ---- type-safe helpers ----
-
-    inline Quantity operator+(Quantity a, Quantity b) {
-        return Quantity{a.raw() + b.raw()};
-    }
-
-    inline Quantity& operator+=(Quantity& a, Quantity b) {
-        a = Quantity{a.raw() + b.raw()};
-        return a;
-    }
-
-    inline Notional operator*(Price p, Quantity q) {
-        return Notional{p.raw() * q.raw()};
-    }
+    using Price    = Strong<PriceTag, std::int32_t>;
+    using Quantity = Strong<QuantityTag, std::int32_t>;
+    using Notional = Strong<NotionalTag, std::uint64_t>; // Added Notional definition
 
 } // namespace map
