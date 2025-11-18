@@ -15,3 +15,11 @@ cmake_install.cmake
 /cmake-build-release/
 events.bin
 .DS_Store
+
+# Performance artifacts
+perf_live.csv
+perf_replay.csv
+events.bin
+
+# Local plots
+docs/images/*.png
