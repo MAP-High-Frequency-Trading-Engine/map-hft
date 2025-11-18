@@ -112,3 +112,134 @@ Week 2 delivers:
 - risk-aware OrderBook enforcement
 - binary LogReader
 - SFML viewer driven entirely by replay data
+
+Here is a **clean, polished Week 3 section** that plugs **directly into the end of your README** exactly as-is.
+
+Paste this **after the Week 2 section** and before the Repository Structure section.
+
+---
+
+# Week 3 – Intent Engine, Adaptive Strategy, and Performance Profiling
+
+### New Features 
+
+### **OrderBook Enhancements & Intent Engine**
+
+* Added **queue-depth estimation** to OrderBook:
+
+  * `totalDepth(side, N)` – sums quantity over top *N* price levels
+  * `orderImbalance(N)` – computes `(bidDepth - askDepth) / (bidDepth + askDepth)`
+* Integrated **intent logic** into `BasicStrategy`:
+
+  * Strategy reads real-time imbalance from OrderBook.
+  * Dynamically adjusts:
+
+    * **Bias side** (more bids vs asks)
+    * **Clip size** (order quantity)
+    * **Ticks-per-order** (aggressiveness)
+* Strategy now reacts to market conditions instead of sending fixed orders.
+
+---
+
+### **Strategy Layer + Performance Visualization**
+
+* Added **aggressiveness parameters** (`minClip`, `maxClip`, `minTicksPerOrder`, `maxTicksPerOrder`)
+* Created **performance suite**:
+
+  * `test_stability.cpp` – high-volume stress test (10,000 events)
+  * `live_sim` benchmark mode:
+
+    ```
+    ./build/live_sim --benchmark
+    ```
+
+    Outputs:
+
+    * total orders
+    * elapsed seconds
+    * orders/sec
+    * avg latency per event (ns)
+* Added **performance CSV output**:
+
+  * `perf_live.csv` – cumulative orders over time
+  * `perf_replay.csv` – events/sec for replay pipeline
+* Generated Week 3 performance plots (inserted manually into `docs/images/`):
+
+  * **Live Simulation: Cumulative Orders vs Tick**
+  * **Replay Throughput: Events/sec**
+
+---
+
+### **Benchmarking & System Profiling**
+
+* Implemented `--benchmark` flag in **live_sim**
+* Added precise timing with `std::chrono::steady_clock`
+* Logged orders-per-second and per-event latency
+* Replay engine now outputs:
+
+  * events processed
+  * total replay time
+  * replay events/sec
+* Optimized event dispatch in EventBus & OrderBook for lower latency.
+
+---
+
+## **How to Reproduce Week 3 Results**
+
+### **1. Run live simulation normally**
+
+```
+./build/live_sim
+```
+
+### **2. Run with benchmark mode**
+
+```
+./build/live_sim --benchmark
+```
+
+Outputs:
+
+* orders/sec
+* latency per event (ns)
+* writes `perf_live.csv`
+
+### **3. Run replay performance test**
+
+```
+./build/replay_test
+```
+
+Outputs:
+
+* events/sec
+* writes `perf_replay.csv`
+
+### **4. Generate plots (in Google Colab or local Python)**
+
+Use `perf_live.csv` and `perf_replay.csv` to recreate:
+
+* Live simulation order generation curve
+* Replay throughput bar chart
+
+Images go into:
+
+```
+docs/images/live_orders.png
+docs/images/replay_perf.png
+```
+
+---
+
+## **Week 3 Deliverables**
+
+✔ Intent-aware strategy
+✔ Queue-depth + imbalance calculations
+✔ Adaptive aggressiveness (dynamic clip + tick interval)
+✔ High-volume stability tests
+✔ Performance CSV logging
+✔ Live & replay throughput plots
+✔ Documentation: `docs/performance_notes.md`
+
+
+
