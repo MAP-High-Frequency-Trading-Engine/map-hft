@@ -51,10 +51,8 @@ target_link_libraries(map_hft_main PRIVATE map_core)
 # Live simulation app (Week 2)
 # ----------------------------------------------------
 add_executable(live_sim
-        src/apps/live_sim.cpp
-        # you can remove these two header lines if you want, they are not needed:
-        # include/map/MarketDataFeed.hpp
-        # include/map/StrongHash.hpp
+        src/apps/live_sim.cpp          # ✅ ONLY the app source
+        # ❌ remove headers / RiskLimits.cpp from here
 )
 target_link_libraries(live_sim PRIVATE map_core)
 
@@ -120,6 +118,7 @@ endif()
 add_executable(unit_tests
         tests/test_orderbook.cpp
         tests/test_eventbus.cpp
+        tests/test_risk.cpp
         tests/test_replay.cpp
 )
 
@@ -130,4 +129,3 @@ target_link_libraries(unit_tests
 )
 
 catch_discover_tests(unit_tests)
-
