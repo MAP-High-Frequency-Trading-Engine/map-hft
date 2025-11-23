@@ -242,4 +242,138 @@ docs/images/replay_perf.png
 ✔ Documentation: `docs/performance_notes.md`
 
 
+## Week 3B– Real LOB Data, Market Impact, and Kill-Switch Risk Engine
+
+### New Data & Market Simulator
+
+* Swapped synthetic prices for **real crypto limit order book snapshots**:
+
+  * Uses Kaggle-style CSVs: `data/BTC_1sec.csv`, `data/ETH_1sec.csv`, `data/ADA_1sec.csv`.
+  * `RealLOBFeed` parses each file and builds a time series of `RealSnapshot { mid, spread, bidDepth15, askDepth15 }`.
+  * `live_sim` now runs **multi-symbol** (BTC, ETH, ADA) in lockstep, consuming real 1-second data.
+* The strategy sees:
+
+  * **Mid price** and **spread** for each symbol
+  * **Top-15 bid/ask depth** (as a proxy for liquidity)
+  * A derived **order book imbalance**:
+    [
+    \text{imbalance} = \frac{\text{bidDepth} - \text{askDepth}}{\text{bidDepth} + \text{askDepth}}
+    ]
+
+---
+
+### BasicStrategy v2 – Inventory & Lagged, Imbalance-Driven Quoting
+
+* `BasicStrategy` now has a richer parameter set (`BasicStrategy::Params`):
+
+  * `minClip`, `maxClip` – min/max order size
+  * `minTicksPerOrder`, `maxTicksPerOrder` – min/max pacing between orders
+  * `lpThreshold` – imbalance threshold before leaning bid/ask
+  * `lagInterval` – how often to recompute intent (simulated information lag)
+  * `maxInventory` – **hard position cap** per symbol
+* Behavior:
+
+  * Uses **external imbalance** from `RealLOBFeed` (rather than synthetic book state) to decide which side to quote.
+  * **Inventory-based quoting**:
+
+    * As inventory moves away from zero, the strategy widens its effective spread and leans to trade back toward flat.
+    * When absolute inventory exceeds `maxInventory`, the strategy stops adding risk and only trades back toward neutral.
+  * Intent (side, clip size, cadence) is recomputed every `lagInterval * intentRecalcInterval` ticks, modeling delayed reactions to the order book.
+
+---
+
+### Market Impact & Adverse Selection Model
+
+* Introduced `ImpactModel` (`map/risk/ImpactModel.*`) to simulate **adverse selection** and **market impact**:
+
+  * Tracks per-symbol state:
+
+    * EWMA of mid-price changes → **volatility proxy**
+    * `tempImpact` (temporary impact) and `permImpact` (permanent impact), both in **ticks**
+    * Last observed mid & spread
+  * On every tick:
+
+    * `onNewTick(symbol, mid, spread)` updates volatility estimate and decays temporary impact.
+  * On every strategy trade:
+
+    * `onTrade(symbol, side, qty, depth, imbalance)` updates impact based on:
+
+      * Trade size vs local depth
+      * Order book imbalance
+      * Estimated volatility
+      * Direction (buy vs sell)
+    * Computes a **probability of adverse move**
+      ( P(\text{adverse} \mid \text{imbalance}, \text{spread}, \text{vol}) ) via a logistic function.
+* Two key APIs:
+
+  * `effectiveMid(symbol, rawMid)` → what the strategy “thinks” fair value is after its own impact.
+  * `executionPrice(symbol, side, rawMid, depth)` → simulated execution price, including adverse selection.
+* The PnL engine (`PnLTracker`) is now marked vs **impacted execution price**, not just raw mid, so aggressive flow gets punished more realistically.
+
+---
+
+### Real-Time Risk Thread & Kill Switch
+
+* Added a dedicated **risk monitoring thread**:
+
+  * Consumes `RiskSample { symbol, mid, spread, pnlTotal }` from the main loop.
+  * Maintains:
+
+    * A rolling window of mids per symbol → realized **volatility** estimate
+    * A **baseline spread** per symbol (average of the first N samples)
+    * A running minimum of **total PnL**
+  * Computes a **kill-switch** on three conditions:
+
+    1. **PnL drawdown**: `pnlTotal < KILL_PNL_THRESHOLD` (e.g., −1000 ticks)
+    2. **Volatility spike**: realized vol > `KILL_VOL_THRESHOLD`
+    3. **Spread explosion**: current spread > `KILL_SPREAD_MULT × baselineSpread`
+* When any condition fires:
+
+  * Logs a message like
+    `"[risk] Kill switch (PnL) triggered: -9055.35"`
+  * Sets a shared atomic `killSwitch` flag.
+  * The main simulation loop checks `killSwitch` each tick and **exits early**, printing:
+
+    * Orders generated before shutdown
+    * Elapsed wall-clock time
+    * Orders/sec and per-event latency (ns)
+* The sample run above shows the strategy trading until the kill switch halts the run around a ~−9k to −12k PnL drawdown, producing on the order of **10⁵–10⁶ orders/sec** in `Release` mode on a laptop.
+
+---
+
+### Stress & Benchmark Knobs (CLI)
+
+`live_sim` now supports a rich CLI for stress testing and profiling:
+
+```bash
+./build/live_sim --freq=1sec --benchmark --compare-strats \
+  --shock-vol --thin-book \
+  --freeze-book=200 \
+  --delay-feed=0 \
+  --lag-strategy=3 \
+  --max-ticks=50000
+```
+
+* `--benchmark` – enable performance logging + summary stats (orders/sec, latency)
+* `--compare-strats` – run **baseline** and **aggressive** parameter sets back-to-back
+* `--freq=1sec` – choose dataset granularity (`BTC_1sec.csv`, etc.)
+* `--shock-vol` – amplify observed spreads (stress high-volatility regimes)
+* `--thin-book` – scale top-15 depth down (simulated illiquidity)
+* `--freeze-book=N` – every N ticks, reuse previous snapshot (stale market data)
+* `--delay-feed=ms` – sleep per tick to simulate slow market data
+* `--lag-strategy=k` – recompute strategy intent every `k`×interval ticks
+* `--max-ticks=N` – cap simulation length for fast benchmarking
+
+Each run prints:
+
+* Kill-switch events (if triggered)
+* Orders generated
+* Elapsed seconds
+* Orders/sec
+* Latency per event (ns)
+* Final **global checksum** for the OrderBook state (for deterministic replay validation)
+
+---
+
+
 
