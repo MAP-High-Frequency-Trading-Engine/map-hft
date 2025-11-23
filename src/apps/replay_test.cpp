@@ -64,11 +64,12 @@ int main(int argc, char** argv) {
     std::cout << "Replay checksum: " << book.checksum() << "\n";
 
     // Write simple CSV for comparisons / plotting
-    std::ofstream pr("perf_replay.csv");
-    if (pr.is_open()) {
-        pr << "events,seconds,events_per_sec\n";
-        pr << events << "," << secs << "," << eps << "\n";
-    }
+std::ofstream pr("perf_replay.csv");
+if (pr.is_open()) {
+    pr << "events,seconds,events_per_sec\n";
+    pr << events << "," << secs << "," << eps << "\n";
+}
+
 
     return 0;
 }

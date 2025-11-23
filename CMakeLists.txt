@@ -31,7 +31,9 @@ add_library(map_core
         src/core/Logger.cpp            # Logger
         src/replay/LogReader.cpp       # Replay
         src/strategy/BasicStrategy.cpp # Strategy
-        src/risk/RiskLimits.cpp        # ✅ add RiskLimits implementation HERE
+        src/risk/RiskLimits.cpp        # Risk limits
+        src/risk/PnLTracker.cpp        # PnL tracker (NEW, lives in core)
+        src/MarketDataFeed.cpp         # Market data feed
 )
 
 target_include_directories(map_core
@@ -48,16 +50,15 @@ add_executable(map_hft_main
 target_link_libraries(map_hft_main PRIVATE map_core)
 
 # ----------------------------------------------------
-# Live simulation app (Week 2)
+# Live simulation app (multi-symbol)
 # ----------------------------------------------------
 add_executable(live_sim
-        src/apps/live_sim.cpp          # ✅ ONLY the app source
-        # ❌ remove headers / RiskLimits.cpp from here
+        src/apps/live_sim.cpp          # only the app source
 )
 target_link_libraries(live_sim PRIVATE map_core)
 
 # ----------------------------------------------------
-# Replay verification app (Week 2)
+# Replay verification app
 # ----------------------------------------------------
 add_executable(replay_test
         src/apps/replay_test.cpp
@@ -72,6 +73,14 @@ add_executable(orderbook_smoke
 )
 target_link_libraries(orderbook_smoke PRIVATE map_core)
 add_test(NAME orderbook_smoke COMMAND orderbook_smoke)
+
+# ----------------------------------------------------
+# Live simulation from real LOB CSV data (optional)
+# ----------------------------------------------------
+# add_executable(live_sim_csv
+#         src/apps/live_sim_csv.cpp
+# )
+# target_link_libraries(live_sim_csv PRIVATE map_core)
 
 # ----------------------------------------------------
 # Optional SFML OrderBook viewer
@@ -129,3 +138,9 @@ target_link_libraries(unit_tests
 )
 
 catch_discover_tests(unit_tests)
+
+# ----------------------------------------------------
+# Benchmark-mode compile switches
+# ----------------------------------------------------
+target_compile_definitions(live_sim PRIVATE MAP_BENCHMARK_MODE)
+target_compile_definitions(replay_test PRIVATE MAP_BENCHMARK_MODE)

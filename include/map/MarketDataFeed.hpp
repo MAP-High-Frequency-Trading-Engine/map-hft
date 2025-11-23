@@ -1,44 +1,57 @@
 #pragma once
 
-#include "map/Types.hpp"
-#include "map/OrderBook.hpp"
-#include <optional>
+#include <array>
+#include <cstddef>
+#include <fstream>
 #include <string>
+#include <vector>
+// include/map/MarketDataFeed.hpp
 
 namespace map {
 
-    /**
-     * @brief Read-only view over a single OrderBook, plus a getBook() shim.
-     *
-     * Right now we only have one OrderBook instance; getBook(symbol) just returns that.
-     * Later you can extend this to a map<string, OrderBook>.
-     */
-    class MarketDataFeed {
+    struct LOBSnapshot {
+        static constexpr std::size_t NUM_LEVELS = 15;
+
+        std::string symbol;
+        double      systemTime{};
+        double      midpoint{};
+        double      spread{};
+        double      buys{};
+        double      sells{};
+
+        std::array<double, NUM_LEVELS> bidDistance{};
+        std::array<double, NUM_LEVELS> askDistance{};
+        std::array<double, NUM_LEVELS> bidLimitNotional{};
+        std::array<double, NUM_LEVELS> askLimitNotional{};
+
+        double bestBidPrice() const {
+            if (midpoint <= 0.0) return 0.0;
+            double d = bidDistance[0] / 100.0; // % → fraction
+            return midpoint * (1.0 + d);       // bids: d should be negative
+        }
+
+        double bestAskPrice() const {
+            if (midpoint <= 0.0) return 0.0;
+            double d = askDistance[0] / 100.0; // % → fraction
+            return midpoint * (1.0 + d);       // asks: d positive
+        }
+    };
+
+    class CSVLOBFeed {
     public:
-        explicit MarketDataFeed(OrderBook& book)
-            : book_(book) {}
+        CSVLOBFeed(const std::string& symbol, const std::string& csvPath);
 
-        // Returns the current best bid price.
-        std::optional<Price> getBestBid() const {
-            return book_.bestBid();
-        }
-
-        // Returns the current best ask price.
-        std::optional<Price> getBestAsk() const {
-            return book_.bestAsk();
-        }
-
-        // Shim to match live_sim.cpp usage: ignores symbol for now.
-        OrderBook& getBook(const std::string& /*symbol*/) {
-            return book_;
-        }
-
-        const OrderBook& getBook(const std::string& /*symbol*/) const {
-            return book_;
-        }
+        bool good() const { return in_.good(); }
+        bool next(LOBSnapshot& out);
 
     private:
-        OrderBook& book_;
+        std::string   symbol_;
+        std::ifstream in_;
+        bool          headerSkipped_ = false;
+
+        static std::vector<std::string> splitLine(const std::string& line);
+        static double parseDouble(const std::vector<std::string>& cols,
+                                  std::size_t idx);
     };
 
 } // namespace map

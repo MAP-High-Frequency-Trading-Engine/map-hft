@@ -7,7 +7,41 @@
 
 namespace map {
 
-    // --- OrderBook::addOrder ---
+    // --- ctor ---
+    OrderBook::OrderBook(RiskLimits* risk)
+        : risk_(risk)
+    {
+    }
+
+    // --- Helpers ---
+
+    OrderBook::PerSymbolBook* OrderBook::getOrCreateBook(const std::string& symbol) {
+        auto it = books_.find(symbol);
+        if (it == books_.end()) {
+            it = books_.emplace(symbol, PerSymbolBook{}).first;
+        }
+        return &it->second;
+    }
+
+    const OrderBook::PerSymbolBook* OrderBook::getBook(const std::string& symbol) const {
+        auto it = books_.find(symbol);
+        if (it == books_.end()) {
+            return nullptr;
+        }
+        return &it->second;
+    }
+
+    const OrderBook::PerSymbolBook* OrderBook::getFirstBook() const {
+        if (books_.empty()) return nullptr;
+        return &books_.begin()->second;
+    }
+
+    std::string OrderBook::getFirstSymbol() const {
+        if (books_.empty()) return {};
+        return books_.begin()->first;
+    }
+
+    // --- addOrder (multi-symbol) ---
     OrderId OrderBook::addOrder(Side side,
                                 Price px,
                                 Quantity qty,
@@ -19,7 +53,7 @@ namespace map {
             return OrderId{0};
         }
 
-        // 2. Optional risk check (currently disabled)
+        // 2. Optional risk check (still disabled by default)
         // if (risk_ && !risk_->checkOrder(symbol, side, px, qty)) {
         //     std::cerr << "RISK REJECT for new order\n";
         //     return OrderId{0};
@@ -28,19 +62,20 @@ namespace map {
         // 3. Generate a new OrderId
         OrderId newId = OrderId{nextId_++};
 
-        // Remaining qty to be (possibly) matched + rested
+        // 4. Get per-symbol book
+        PerSymbolBook* book = getOrCreateBook(symbol);
+
+        // Remaining qty to be matched + potentially rested
         Quantity remaining = qty;
 
-        // 4. Simple price-time matching
+        // Matching lambda uses the *symbol-specific* book
         auto matchAgainst = [&](auto& aggressorRemaining,
                                 Side aggressorSide,
                                 Price aggressorPx) {
-            // For Bid: match vs asks_ (lowest ask first, price <= bid px)
-            // For Ask: match vs bids_ (highest bid first, price >= ask px)
             if (aggressorSide == Side::Bid) {
-                // match against asks_
-                while (aggressorRemaining.raw() > 0 && !asks_.empty()) {
-                    auto bestAskIt = asks_.begin(); // lowest ask
+                // Match vs asks_ for THIS symbol
+                while (aggressorRemaining.raw() > 0 && !book->asks.empty()) {
+                    auto bestAskIt = book->asks.begin(); // lowest ask
                     Price bestAskPx = bestAskIt->first;
                     if (bestAskPx.raw() > aggressorPx.raw()) {
                         break; // no more crossing prices
@@ -69,13 +104,12 @@ namespace map {
                     }
 
                     if (queue.empty()) {
-                        asks_.erase(bestAskIt);
+                        book->asks.erase(bestAskIt);
                     }
                 }
-            } else {
-                // aggressorSide == Ask → match against bids_
-                while (aggressorRemaining.raw() > 0 && !bids_.empty()) {
-                    auto bestBidIt = bids_.begin(); // highest bid
+            } else { // Ask side
+                while (aggressorRemaining.raw() > 0 && !book->bids.empty()) {
+                    auto bestBidIt = book->bids.begin(); // highest bid
                     Price bestBidPx = bestBidIt->first;
                     if (bestBidPx.raw() < aggressorPx.raw()) {
                         break; // no more crossing prices
@@ -103,44 +137,45 @@ namespace map {
                     }
 
                     if (queue.empty()) {
-                        bids_.erase(bestBidIt);
+                        book->bids.erase(bestBidIt);
                     }
                 }
             }
         };
 
-        // Do the matching pass
+        // 5. Do the matching pass in this symbol's book
         matchAgainst(remaining, side, px);
 
-        // 5. If anything remains, rest it in the book
+        // 6. If anything remains, rest it in this symbol's book
         if (remaining.raw() > 0) {
             Order resting{newId, symbol, side, px, remaining};
 
             LevelQueue& levelQueue =
-                (side == Side::Bid) ? bids_[px] : asks_[px];
+                (side == Side::Bid) ? book->bids[px] : book->asks[px];
+
             levelQueue.push_back(resting);
-            index_[newId] = {side, px};
-        } else {
-            // If fully filled, we don't actually rest the order in the book.
-            // The OrderId is still returned (could be used to log a trade).
+            index_[newId] = std::make_tuple(symbol, side, px);
         }
 
         return newId;
     }
 
-    // --- OrderBook::cancelOrder ---
+    // --- cancelOrder (multi-symbol) ---
     bool OrderBook::cancelOrder(OrderId id) {
         auto it = index_.find(id);
         if (it == index_.end()) {
             return false; // Not found
         }
 
-        Side  side = it->second.first;
-        Price px   = it->second.second;
+        const std::string& symbol = std::get<0>(it->second);
+        Side               side   = std::get<1>(it->second);
+        Price              px     = std::get<2>(it->second);
+
+        PerSymbolBook* book = getOrCreateBook(symbol);
 
         if (side == Side::Bid) {
-            auto levelIt = bids_.find(px);
-            if (levelIt != bids_.end()) {
+            auto levelIt = book->bids.find(px);
+            if (levelIt != book->bids.end()) {
                 auto& queue = levelIt->second;
                 auto orderIt = std::find_if(
                     queue.begin(), queue.end(),
@@ -149,13 +184,13 @@ namespace map {
                 if (orderIt != queue.end()) {
                     queue.erase(orderIt);
                     if (queue.empty()) {
-                        bids_.erase(levelIt);
+                        book->bids.erase(levelIt);
                     }
                 }
             }
         } else { // Side::Ask
-            auto levelIt = asks_.find(px);
-            if (levelIt != asks_.end()) {
+            auto levelIt = book->asks.find(px);
+            if (levelIt != book->asks.end()) {
                 auto& queue = levelIt->second;
                 auto orderIt = std::find_if(
                     queue.begin(), queue.end(),
@@ -164,7 +199,7 @@ namespace map {
                 if (orderIt != queue.end()) {
                     queue.erase(orderIt);
                     if (queue.empty()) {
-                        asks_.erase(levelIt);
+                        book->asks.erase(levelIt);
                     }
                 }
             }
@@ -174,23 +209,42 @@ namespace map {
         return true;
     }
 
-    // --- OrderBook::bestBid / bestAsk ---
+    // --- bestBid / bestAsk (symbol-specific) ---
+
+    std::optional<Price> OrderBook::bestBid(const std::string& symbol) const {
+        const PerSymbolBook* book = getBook(symbol);
+        if (!book || book->bids.empty()) return std::nullopt;
+        return book->bids.begin()->first;
+    }
+
+    std::optional<Price> OrderBook::bestAsk(const std::string& symbol) const {
+        const PerSymbolBook* book = getBook(symbol);
+        if (!book || book->asks.empty()) return std::nullopt;
+        return book->asks.begin()->first;
+    }
+
+    // --- Legacy bestBid / bestAsk (use "first" symbol) ---
+
     std::optional<Price> OrderBook::bestBid() const {
-        if (bids_.empty()) return std::nullopt;
-        return bids_.begin()->first;
+        const PerSymbolBook* book = getFirstBook();
+        if (!book || book->bids.empty()) return std::nullopt;
+        return book->bids.begin()->first;
     }
 
     std::optional<Price> OrderBook::bestAsk() const {
-        if (asks_.empty()) return std::nullopt;
-        return asks_.begin()->first;
+        const PerSymbolBook* book = getFirstBook();
+        if (!book || book->asks.empty()) return std::nullopt;
+        return book->asks.begin()->first;
     }
 
-    // --- OrderBook::snapshot ---
+    // --- snapshot (first symbol) ---
     std::vector<LevelInfo> OrderBook::snapshot(Side side) const {
         std::vector<LevelInfo> levels;
+        const PerSymbolBook* book = getFirstBook();
+        if (!book) return levels;
 
         if (side == Side::Bid) {
-            for (const auto& [price, queue] : bids_) {
+            for (const auto& [price, queue] : book->bids) {
                 Quantity totalQty{0};
                 for (const auto& order : queue) {
                     totalQty = Quantity{ totalQty.raw() + order.qty.raw() };
@@ -198,7 +252,7 @@ namespace map {
                 levels.push_back({price, totalQty});
             }
         } else {
-            for (const auto& [price, queue] : asks_) {
+            for (const auto& [price, queue] : book->asks) {
                 Quantity totalQty{0};
                 for (const auto& order : queue) {
                     totalQty = Quantity{ totalQty.raw() + order.qty.raw() };
@@ -210,26 +264,30 @@ namespace map {
         return levels;
     }
 
-    // --- NEW: totalDepth (used by intent engine) ---
-    Quantity OrderBook::totalDepth(Side side, int maxLevels) const {
+    // --- totalDepth (symbol-specific) ---
+    Quantity OrderBook::totalDepth(const std::string& symbol,
+                                   Side side,
+                                   int maxLevels) const
+    {
+        const PerSymbolBook* book = getBook(symbol);
+        if (!book) return Quantity{0};
+
         Quantity total{0};
         int levelCount = 0;
 
         if (side == Side::Bid) {
-            for (const auto& [price, queue] : bids_) {
+            for (const auto& [price, queue] : book->bids) {
                 (void)price;
                 if (maxLevels > 0 && levelCount >= maxLevels) break;
-
                 for (const auto& order : queue) {
                     total = Quantity{ total.raw() + order.qty.raw() };
                 }
                 ++levelCount;
             }
         } else {
-            for (const auto& [price, queue] : asks_) {
+            for (const auto& [price, queue] : book->asks) {
                 (void)price;
                 if (maxLevels > 0 && levelCount >= maxLevels) break;
-
                 for (const auto& order : queue) {
                     total = Quantity{ total.raw() + order.qty.raw() };
                 }
@@ -240,10 +298,12 @@ namespace map {
         return total;
     }
 
-    // --- NEW: orderImbalance ([-1, 1]) ---
-    double OrderBook::orderImbalance(int maxLevels) const {
-        Quantity bidDepth = totalDepth(Side::Bid, maxLevels);
-        Quantity askDepth = totalDepth(Side::Ask, maxLevels);
+    // --- orderImbalance (symbol-specific) ---
+    double OrderBook::orderImbalance(const std::string& symbol,
+                                     int maxLevels) const
+    {
+        Quantity bidDepth = totalDepth(symbol, Side::Bid, maxLevels);
+        Quantity askDepth = totalDepth(symbol, Side::Ask, maxLevels);
 
         double b = static_cast<double>(bidDepth.raw());
         double a = static_cast<double>(askDepth.raw());
@@ -255,25 +315,45 @@ namespace map {
         return (b - a) / denom; // -1 (all asks) to +1 (all bids)
     }
 
-    // --- OrderBook::checksum ---
+    // --- Legacy totalDepth / orderImbalance (first symbol) ---
+
+    Quantity OrderBook::totalDepth(Side side, int maxLevels) const {
+        std::string symbol = getFirstSymbol();
+        if (symbol.empty()) return Quantity{0};
+        return totalDepth(symbol, side, maxLevels);
+    }
+
+    double OrderBook::orderImbalance(int maxLevels) const {
+        std::string symbol = getFirstSymbol();
+        if (symbol.empty()) return 0.0;
+        return orderImbalance(symbol, maxLevels);
+    }
+
+    // --- checksum ---
     std::uint64_t OrderBook::checksum() const {
         std::uint64_t hash = 0;
 
-        // Bids checksum
-        for (const auto& [price, queue] : bids_) {
-            hash ^= static_cast<std::uint64_t>(price.raw());
-            for (const auto& order : queue) {
-                hash += order.id.raw();
-                hash += static_cast<std::uint64_t>(order.qty.raw());
-            }
-        }
+        for (const auto& [symbol, book] : books_) {
+            // Mix in the symbol name
+            std::uint64_t symHash = std::hash<std::string>{}(symbol);
+            hash ^= symHash;
 
-        // Asks checksum
-        for (const auto& [price, queue] : asks_) {
-            hash ^= static_cast<std::uint64_t>(price.raw());
-            for (const auto& order : queue) {
-                hash += order.id.raw();
-                hash += static_cast<std::uint64_t>(order.qty.raw());
+            // Bids checksum
+            for (const auto& [price, queue] : book.bids) {
+                hash ^= static_cast<std::uint64_t>(price.raw());
+                for (const auto& order : queue) {
+                    hash += order.id.raw();
+                    hash += static_cast<std::uint64_t>(order.qty.raw());
+                }
+            }
+
+            // Asks checksum
+            for (const auto& [price, queue] : book.asks) {
+                hash ^= static_cast<std::uint64_t>(price.raw());
+                for (const auto& order : queue) {
+                    hash += order.id.raw();
+                    hash += static_cast<std::uint64_t>(order.qty.raw());
+                }
             }
         }
 

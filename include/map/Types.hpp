@@ -30,7 +30,7 @@ namespace map {
 
     // --- Strong Typedefs ---
     using OrderId  = Strong<OrderIdTag, std::uint64_t>;
-    using Price    = Strong<PriceTag, std::int32_t>;
+    using Price    = Strong<PriceTag, double>;
     using Quantity = Strong<QuantityTag, std::int32_t>;
     using Notional = Strong<NotionalTag, std::uint64_t>; // Added Notional definition
 

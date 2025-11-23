@@ -69,7 +69,8 @@ namespace map {
 
                 // Price/Quantity are strong typedefs over an int-like type.
                 // We wrote them as int64_t, so cast back down.
-                e.price = Price{static_cast<int>(px)};
+                e.price = Price{static_cast<double>(px)};
+
                 e.qty   = Quantity{static_cast<int>(qty)};
                 e.side  = static_cast<Side>(sideVal);
 
@@ -104,7 +105,7 @@ namespace map {
 
                 e.takerId   = OrderId{takerIdRaw};
                 e.makerId   = OrderId{makerIdRaw};
-                e.price     = Price{static_cast<int>(px)};
+                e.price = Price{static_cast<double>(px)};
                 e.qty       = Quantity{static_cast<int>(qty)};
                 e.takerSide = static_cast<Side>(sideVal);
 
