@@ -113,11 +113,7 @@ Week 2 delivers:
 - binary LogReader
 - SFML viewer driven entirely by replay data
 
-Here is a **clean, polished Week 3 section** that plugs **directly into the end of your README** exactly as-is.
 
-Paste this **after the Week 2 section** and before the Repository Structure section.
-
----
 
 # Week 3 – Intent Engine, Adaptive Strategy, and Performance Profiling
 
@@ -242,7 +238,7 @@ docs/images/replay_perf.png
 ✔ Documentation: `docs/performance_notes.md`
 
 
-## Week 3B– Real LOB Data, Market Impact, and Kill-Switch Risk Engine
+### Week 3 (Part 2) – Real LOB Data, Market Impact, and Kill-Switch Risk Engine
 
 ### New Data & Market Simulator
 
@@ -256,9 +252,9 @@ docs/images/replay_perf.png
   * **Mid price** and **spread** for each symbol
   * **Top-15 bid/ask depth** (as a proxy for liquidity)
   * A derived **order book imbalance**:
-    [
-    \text{imbalance} = \frac{\text{bidDepth} - \text{askDepth}}{\text{bidDepth} + \text{askDepth}}
-    ]
+
+  `imbalance = (bidDepth - askDepth) / (bidDepth + askDepth)`
+
 
 ---
 
