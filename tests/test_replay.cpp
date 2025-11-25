@@ -44,7 +44,7 @@ TEST_CASE("Record + replay produce same book checksum", "[replay]") {
             NewOrderEvent e;
             e.symbol = symbol;
             e.side   = (i % 2 == 0) ? Side::Bid : Side::Ask;
-            e.price  = Price{100 + (i % 5)};
+            e.price  = Price{static_cast<double>(100 + (i % 5))};
             e.qty    = Quantity{1 + (i % 3)};
             bus.publish(e);
         }

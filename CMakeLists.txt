@@ -4,6 +4,10 @@ project(map_hft LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+find_package(Threads REQUIRED)
+find_package(CURL REQUIRED)
+find_package(OpenSSL REQUIRED)
+
 # ----------------------------------------------------
 # Testing / Catch2 setup
 # ----------------------------------------------------
@@ -20,6 +24,28 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(Catch2)
 
+FetchContent_Declare(
+        websocketpp
+        GIT_REPOSITORY https://github.com/zaphoyd/websocketpp.git
+        GIT_TAG 0.8.2
+)
+
+FetchContent_Declare(
+        nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.11.3
+)
+
+FetchContent_Declare(
+        asio
+        GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
+        GIT_TAG asio-1-30-2
+)
+
+FetchContent_Populate(websocketpp)
+FetchContent_Populate(nlohmann_json)
+FetchContent_Populate(asio)
+
 list(APPEND CMAKE_MODULE_PATH ${Catch2_SOURCE_DIR}/extras)
 include(Catch)
 
@@ -31,15 +57,36 @@ add_library(map_core
         src/core/Logger.cpp            # Logger
         src/replay/LogReader.cpp       # Replay
         src/strategy/BasicStrategy.cpp # Strategy
+        src/strategy/ZeroDTEStrategy.cpp
+        src/strategy/GammaScalpStrategy.cpp
+        src/execution/AlgoExecutor.cpp
         src/risk/RiskLimits.cpp        # Risk limits
+        src/risk/GreeksRisk.cpp
         src/risk/PnLTracker.cpp        # PnL tracker (NEW, lives in core)
         src/MarketDataFeed.cpp         # Market data feed
+        src/alpaca/AlpacaClient.cpp
+        src/alpaca/AlpacaExecutor.cpp
+        src/alpaca/AlpacaStream.cpp
+        src/alpaca/OptionChainProvider.cpp
+        src/logic/OptionManager.cpp
 )
 
 target_include_directories(map_core
         PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${websocketpp_SOURCE_DIR}
+        ${asio_SOURCE_DIR}/asio/include
+        ${nlohmann_json_SOURCE_DIR}/single_include
 )
+
+target_link_libraries(map_core
+        PUBLIC
+        CURL::libcurl
+        Threads::Threads
+        OpenSSL::SSL
+        OpenSSL::Crypto
+)
+target_compile_definitions(map_core PUBLIC ASIO_STANDALONE WEBSOCKETPP_CPP11_STL)
 
 # ----------------------------------------------------
 # Text-based demo / main sample
@@ -56,6 +103,14 @@ add_executable(live_sim
         src/apps/live_sim.cpp          # only the app source
 )
 target_link_libraries(live_sim PRIVATE map_core)
+
+# ----------------------------------------------------
+# Live Alpaca bridge
+# ----------------------------------------------------
+add_executable(alpaca_bridge
+        src/apps/alpaca_bridge.cpp
+)
+target_link_libraries(alpaca_bridge PRIVATE map_core)
 
 # ----------------------------------------------------
 # Replay verification app
@@ -129,6 +184,8 @@ add_executable(unit_tests
         tests/test_eventbus.cpp
         tests/test_risk.cpp
         tests/test_replay.cpp
+        tests/test_greeks_risk.cpp
+        tests/test_lockfree_queue.cpp
 )
 
 target_link_libraries(unit_tests
