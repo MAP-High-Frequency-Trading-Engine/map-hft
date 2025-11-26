@@ -1,25 +1,24 @@
-# CLion / IntelliJ
-.idea/
-cmake-build-*/
-
-# CMake
-CMakeFiles/
-CMakeCache.txt
-Makefile
-cmake_install.cmake
-
-# macOS
-.DS_Store
-/build/
-/cmake-build-debug/
-/cmake-build-release/
-events.bin
 .DS_Store
 
-# Performance artifacts
-perf_live.csv
-perf_replay.csv
-events.bin
+# Ignore all CSV market data
+data/*.csv
+data/**/*.csv
 
-# Local plots
+# Ignore any large datasets accidentally dropped in repo
+*.csv
+*.parquet
+*.zip
+*.gz
+*.bz2
+
+# Ignore performance outputs
+perf_live*.csv
+perf_replay*.csv
+events*.bin
+
+# Ignore latency logs
+latency_*.csv
+
+# Ignore plots
 docs/images/*.png
+

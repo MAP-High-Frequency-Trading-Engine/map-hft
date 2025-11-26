@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/ob_viewer.dir/ob_viewer.cpp.o -o ob_viewer  -Wl,-rpath,/usr/local/lib libmap_core.a /usr/local/lib/libsfml-graphics.3.0.2.dylib /usr/local/lib/libsfml-window.3.0.2.dylib /usr/local/lib/libsfml-system.3.0.2.dylib

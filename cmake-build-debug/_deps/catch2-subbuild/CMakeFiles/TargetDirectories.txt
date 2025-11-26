@@ -1,0 +1,3 @@
+/Users/avimaslow/CLionProjects/Map/cmake-build-debug/_deps/catch2-subbuild/CMakeFiles/catch2-populate.dir
+/Users/avimaslow/CLionProjects/Map/cmake-build-debug/_deps/catch2-subbuild/CMakeFiles/edit_cache.dir
+/Users/avimaslow/CLionProjects/Map/cmake-build-debug/_deps/catch2-subbuild/CMakeFiles/rebuild_cache.dir

@@ -14,57 +14,59 @@ namespace map {
 class BasicStrategy {
 public:
     struct Params {
-        // Base configuration (will be overridden by real mid)
         Price         basePrice;
         Quantity      clipSize;
         std::uint64_t ticksPerOrder;
 
-        // Aggressiveness tuning
-        int           aggressivenessMode = 1; // 0=slow,1=medium,2=aggressive
+        int           aggressivenessMode = 1;
         Quantity      minClip           = Quantity(std::int32_t(1));
         Quantity      maxClip           = Quantity(std::int32_t(20));
         std::uint64_t minTicksPerOrder  = 1;
         std::uint64_t maxTicksPerOrder  = 10;
 
-        // How often to recompute intent (to save work)
-        std::uint64_t intentRecalcInterval = 2; // every N ticks
+        std::uint64_t intentRecalcInterval = 2;
 
-        // LP/LT behaviour
-        double        lpThreshold      = 0.20;  // imbalance where we start LP bias
-        double        ltThreshold      = 0.60;  // imbalance where we might “take”
-        int           lpBaseOffset     = 2;     // ticks away from mid for LP quotes
+        double        lpThreshold      = 0.20;  // when |imbalance| > this → directional
+        double        ltThreshold      = 0.60;  // (kept for experimentation)
+        int           lpBaseOffset     = 2;     // baseline quote offset in ticks
+
+        int           lagInterval      = 1;     // how often we re-evaluate intent
+
+        // Inventory controls (for inventory-based quoting)
+        std::int32_t  maxInventory     = 200;   // in "share" units (qty.raw())
     };
 
     BasicStrategy(EventBus& bus,
                   const std::string& symbol,
                   const Params& params);
 
-    // Called each simulation tick
     void onTick(std::uint64_t t, OrderBook& book);
 
-    // --- Hooks for external (real) market data ---
     void setMidPrice(Price p) { basePrice_ = p; }
-    void setSpread(int s) { externalSpread_ = s; }
+    void setSpread(int s)     { externalSpread_ = s; }
 
-    // Use external order-imbalance signal (-1..1)
     void setExternalImbalance(double x) {
-        externalImbalance_      = x;
-        hasExternalImbalance_   = true;
+        externalImbalance_    = x;
+        hasExternalImbalance_ = true;
     }
 
+    // Allow turning off book-based imbalance (for speed experiments)
+    void setUseBookImbalance(bool x) { useBookImbalance_ = x; }
+
+    // Optional getter for debugging
+    double lastImbalance() const { return lastImbalance_; }
+
 private:
-    void fireOne();                     // send one order based on current intent
-    void updateIntent(const OrderBook& book);  // recompute aggressiveness / LP vs LT
+    void fireOne();
+    void updateIntent(const OrderBook& book);
 
-    EventBus&     bus_;
-    std::string   symbol_;
+    EventBus&    bus_;
+    std::string  symbol_;
 
-    // core configuration
     Price         basePrice_;
     Quantity      clipSize_;
     std::uint64_t ticksPerOrder_;
 
-    // adaptive intent parameters
     int           aggressivenessMode_;
     Quantity      minClip_;
     Quantity      maxClip_;
@@ -72,23 +74,29 @@ private:
     std::uint64_t maxTicksPerOrder_;
     std::uint64_t intentRecalcInterval_;
 
-    // LP/LT configuration
     double        lpThreshold_;
     double        ltThreshold_;
     int           lpBaseOffset_;
 
-    // current state
     Quantity      currentClip_;
     std::uint64_t currentTicksPerOrder_;
-    double        lastImbalance_ = 0.0;   // blended signal we’re using
+    double        lastImbalance_ = 0.0;
 
-    // external signal fields
+    // lag feature
+    int           lagInterval_;
+
+    // external data
     double        externalImbalance_    = 0.0;
     bool          hasExternalImbalance_ = false;
     int           externalSpread_       = 0;
 
-    // randomness
-    std::mt19937                    rng_;
+    // Inventory model (simple running net qty in "shares")
+    std::int32_t  inventory_      = 0;
+    std::int32_t  maxInventory_   = 200;
+
+    bool          useBookImbalance_ = true;
+
+    std::mt19937 rng_;
     std::uniform_real_distribution<double> uni01_;
 };
 

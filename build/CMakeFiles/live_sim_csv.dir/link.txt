@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/live_sim_csv.dir/src/apps/live_sim_csv.cpp.o -o live_sim_csv  libmap_core.a

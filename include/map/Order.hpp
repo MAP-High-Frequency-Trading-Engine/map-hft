@@ -8,23 +8,24 @@ namespace map {
 
     // An order resting in the book.
     struct Order {
-        OrderId    id;
+        OrderId     id;
         std::string symbol;
         Side        side;
-        Price       price;
-        Quantity    qty; // This represents the *remaining* quantity in the book
+        Price       px;   // price in ticks
+        Quantity    qty;  // remaining quantity in the book
 
-        // Default constructor
         Order() = default;
 
-        // Explicit constructor matching the usage in OrderBook.cpp (line 42)
-        Order(OrderId id,
-              const std::string& symbol,
-              Side side,
-              Price price,
+        Order(OrderId id_,
+              const std::string& symbol_,
+              Side side_,
+              Price px_,
               Quantity initialQty)
-            // Initializing members
-            : id(id), symbol(symbol), side(side), price(price), qty(initialQty)
+            : id(id_),
+              symbol(symbol_),
+              side(side_),
+              px(px_),          // <-- match the member name
+              qty(initialQty)
         {}
     };
 

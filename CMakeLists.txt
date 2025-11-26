@@ -32,8 +32,9 @@ add_library(map_core
         src/replay/LogReader.cpp       # Replay
         src/strategy/BasicStrategy.cpp # Strategy
         src/risk/RiskLimits.cpp        # Risk limits
-        src/risk/PnLTracker.cpp        # PnL tracker (NEW, lives in core)
-        src/MarketDataFeed.cpp         # Market data feed
+        src/risk/PnLTracker.cpp        # PnL tracker
+        src/MarketDataFeed.cpp         # Market data feed (CSVLOBFeed)
+        src/risk/ImpactModel.cpp       # Impact model
 )
 
 target_include_directories(map_core
@@ -50,20 +51,20 @@ add_executable(map_hft_main
 target_link_libraries(map_hft_main PRIVATE map_core)
 
 # ----------------------------------------------------
-# Live simulation app (multi-symbol)
+# Live simulation apps
 # ----------------------------------------------------
+
+# Single-threaded app
 add_executable(live_sim
-        src/apps/live_sim.cpp          # only the app source
+        src/apps/live_sim.cpp
 )
 target_link_libraries(live_sim PRIVATE map_core)
 
-# ----------------------------------------------------
-# Replay verification app
-# ----------------------------------------------------
-add_executable(replay_test
-        src/apps/replay_test.cpp
+# Multi-threaded app
+add_executable(live_sim_mt
+        src/apps/live_sim_mt.cpp
 )
-target_link_libraries(replay_test PRIVATE map_core)
+target_link_libraries(live_sim_mt PRIVATE map_core)
 
 # ----------------------------------------------------
 # Simple smoke test for the OrderBook
@@ -75,51 +76,12 @@ target_link_libraries(orderbook_smoke PRIVATE map_core)
 add_test(NAME orderbook_smoke COMMAND orderbook_smoke)
 
 # ----------------------------------------------------
-# Live simulation from real LOB CSV data (optional)
+# Replay verification app
 # ----------------------------------------------------
-# add_executable(live_sim_csv
-#         src/apps/live_sim_csv.cpp
-# )
-# target_link_libraries(live_sim_csv PRIVATE map_core)
-
-# ----------------------------------------------------
-# Optional SFML OrderBook viewer
-# ----------------------------------------------------
-option(MAP_BUILD_OB_VIEWER "Build SFML-based order book viewer" OFF)
-
-if (MAP_BUILD_OB_VIEWER)
-    # Try SFML 3.x first
-    find_package(SFML 3 QUIET COMPONENTS Graphics Window System)
-
-    if (SFML_FOUND)
-        set(SFML_GRAPHICS_TARGET SFML::Graphics)
-        set(SFML_WINDOW_TARGET   SFML::Window)
-        set(SFML_SYSTEM_TARGET   SFML::System)
-    else()
-        # Fallback to SFML 2.x
-        find_package(SFML REQUIRED COMPONENTS system window graphics)
-
-        if (TARGET sfml-graphics)
-            set(SFML_GRAPHICS_TARGET sfml-graphics)
-            set(SFML_WINDOW_TARGET   sfml-window)
-            set(SFML_SYSTEM_TARGET   sfml-system)
-        else()
-            message(FATAL_ERROR "SFML found but no known targets (sfml-graphics or SFML::Graphics)")
-        endif()
-    endif()
-
-    add_executable(ob_viewer
-            ob_viewer.cpp
-    )
-
-    target_link_libraries(ob_viewer
-            PRIVATE
-            map_core
-            ${SFML_GRAPHICS_TARGET}
-            ${SFML_WINDOW_TARGET}
-            ${SFML_SYSTEM_TARGET}
-    )
-endif()
+add_executable(replay_test
+        src/apps/replay_test.cpp
+)
+target_link_libraries(replay_test PRIVATE map_core)
 
 # ----------------------------------------------------
 # Catch2 unit tests target (includes replay test)
@@ -130,17 +92,32 @@ add_executable(unit_tests
         tests/test_risk.cpp
         tests/test_replay.cpp
 )
-
 target_link_libraries(unit_tests
         PRIVATE
         map_core
         Catch2::Catch2WithMain
 )
-
 catch_discover_tests(unit_tests)
 
 # ----------------------------------------------------
 # Benchmark-mode compile switches
 # ----------------------------------------------------
-target_compile_definitions(live_sim PRIVATE MAP_BENCHMARK_MODE)
+target_compile_definitions(live_sim   PRIVATE MAP_BENCHMARK_MODE)
 target_compile_definitions(replay_test PRIVATE MAP_BENCHMARK_MODE)
+
+# ----------------------------------------------------
+# Optional PMR allocators in OrderBook
+# ----------------------------------------------------
+option(MAP_USE_PMR "Use std::pmr arena allocators in OrderBook" ON)
+
+if (MAP_USE_PMR)
+    target_compile_definitions(map_core PUBLIC MAP_USE_PMR)
+endif()
+
+# ----------------------------------------------------
+# Global optimization flags for Release
+# ----------------------------------------------------
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
+    add_compile_options(-O3 -DNDEBUG)
+    add_link_options(-flto)
+endif()

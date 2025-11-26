@@ -1,0 +1,16 @@
+/Applications/CLion.app/Contents/bin/cmake/mac/x64/bin/cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_MAKE_PROGRAM=/Applications/CLion.app/Contents/bin/ninja/mac/x64/ninja -G Ninja -DPython_EXECUTABLE=/Users/avimaslow/CLionProjects/Map/.venv/bin/python -DPython3_EXECUTABLE=/Users/avimaslow/CLionProjects/Map/.venv/bin/python -S /Users/avimaslow/CLionProjects/Map -B /Users/avimaslow/CLionProjects/Map/cmake-build-debug
+CMake Error: Error: generator : Ninja
+Does not match the generator used previously: Unix Makefiles
+Either remove the CMakeCache.txt file and CMakeFiles directory or choose a different binary directory.
+
+CMake Error at /Applications/CLion.app/Contents/bin/cmake/mac/x64/share/cmake-4.0/Modules/FetchContent.cmake:1906 (message):
+  CMake step for catch2 failed: 1
+Call Stack (most recent call first):
+  /Applications/CLion.app/Contents/bin/cmake/mac/x64/share/cmake-4.0/Modules/FetchContent.cmake:1609 (__FetchContent_populateSubbuild)
+  /Applications/CLion.app/Contents/bin/cmake/mac/x64/share/cmake-4.0/Modules/FetchContent.cmake:2145:EVAL:2 (__FetchContent_doPopulation)
+  /Applications/CLion.app/Contents/bin/cmake/mac/x64/share/cmake-4.0/Modules/FetchContent.cmake:2145 (cmake_language)
+  /Applications/CLion.app/Contents/bin/cmake/mac/x64/share/cmake-4.0/Modules/FetchContent.cmake:2384 (__FetchContent_Populate)
+  CMakeLists.txt:21 (FetchContent_MakeAvailable)
+
+
+-- Configuring incomplete, errors occurred!

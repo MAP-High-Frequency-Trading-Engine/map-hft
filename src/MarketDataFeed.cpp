@@ -53,7 +53,7 @@ bool CSVLOBFeed::next(LOBSnapshot& out) {
 
     while (std::getline(in_, line)) {
         if (!headerSkipped_) {
-            // First line is header
+            // First line is header; skip it
             headerSkipped_ = true;
             continue;
         }
@@ -68,14 +68,15 @@ bool CSVLOBFeed::next(LOBSnapshot& out) {
             continue;
         }
 
-        out.symbol    = symbol_;
-        out.systemTime = parseDouble(cols, 1);
+        // Basic fields
+        out.symbol     = symbol_;
+        out.systemTime = parseDouble(cols, 1);  // adjust if your CSV differs
         out.midpoint   = parseDouble(cols, 2);
         out.spread     = parseDouble(cols, 3);
         out.buys       = parseDouble(cols, 4);
         out.sells      = parseDouble(cols, 5);
 
-        // Indices from your comment:
+        // Column layout (from your earlier notes):
         //
         //  6–20   : bids_distance_0..14
         // 51–65   : bids_limit_notional_0..14
@@ -94,7 +95,7 @@ bool CSVLOBFeed::next(LOBSnapshot& out) {
             out.askLimitNotional[i] = parseDouble(cols, 126 + i);
         }
 
-        return true;
+        return true; // successfully filled `out`
     }
 
     return false; // EOF

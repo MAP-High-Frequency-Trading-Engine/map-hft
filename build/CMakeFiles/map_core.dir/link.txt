@@ -1,0 +1,2 @@
+/usr/bin/ar qc libmap_core.a CMakeFiles/map_core.dir/src/OrderBook.cpp.o CMakeFiles/map_core.dir/src/core/Logger.cpp.o CMakeFiles/map_core.dir/src/replay/LogReader.cpp.o CMakeFiles/map_core.dir/src/strategy/BasicStrategy.cpp.o CMakeFiles/map_core.dir/src/risk/RiskLimits.cpp.o CMakeFiles/map_core.dir/src/risk/PnLTracker.cpp.o CMakeFiles/map_core.dir/src/MarketDataFeed.cpp.o CMakeFiles/map_core.dir/src/risk/ImpactModel.cpp.o
+/usr/bin/ranlib libmap_core.a

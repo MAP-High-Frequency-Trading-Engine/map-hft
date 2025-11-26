@@ -6,6 +6,7 @@
 #include <sstream>
 #include <iostream>
 #include <algorithm>
+#include <cmath>   // for std::sin
 
 namespace map {
 
@@ -32,11 +33,12 @@ class RealLOBFeed {
 public:
     RealLOBFeed() = default;
 
-    explicit RealLOBFeed(const std::string& filename) {
-        loadCSV(filename);
+    explicit RealLOBFeed(const std::string& filename, bool shockVol = false) {
+        loadCSV(filename, shockVol);
     }
 
-    bool loadCSV(const std::string& filename) {
+    // NOTE: second param = stress flag for --shock-vol
+    bool loadCSV(const std::string& filename, bool shockVol = false) {
         snapshots_.clear();
 
         // Reserve to avoid reallocations (BTC_1sec ≈ 1.03M rows)
@@ -121,6 +123,15 @@ public:
 
             snap.bidDepth15 = bidSum;
             snap.askDepth15 = askSum;
+
+            // --- Stress hook: shock-vol ---
+            if (shockVol) {
+                // Deterministic "volatility" jiggle on mid + spread
+                double phase  = static_cast<double>(lineCount) * 0.01;
+                double shock  = 1.0 + 0.5 * std::sin(phase);  // in [0.5, 1.5]
+                snap.mid      = snap.mid * shock;
+                snap.spread   = snap.spread * (1.0 + 0.25 * std::sin(phase * 0.7));
+            }
 
             snapshots_.push_back(snap);
             ++lineCount;
