@@ -1,24 +1,29 @@
 .DS_Store
 
-# Ignore all CSV market data
+# === Local data / big files (KEEP OUT OF GIT) ===
+data/
 data/*.csv
 data/**/*.csv
-
-# Ignore any large datasets accidentally dropped in repo
 *.csv
 *.parquet
 *.zip
 *.gz
 *.bz2
 
-# Ignore performance outputs
+# === Build artifacts ===
+build/
+cmake-build-debug/
+
+# === IDE / local config ===
+.idea/
+
+# === Binaries / test artifacts ===
+test_events.bin
+latency_*.csv
 perf_live*.csv
 perf_replay*.csv
 events*.bin
 
-# Ignore latency logs
-latency_*.csv
-
-# Ignore plots
+# === Docs images ===
 docs/images/*.png
 
