@@ -1,4 +1,6 @@
+## 📄 Project Overview (PDF)
 
+[View the full project overview (PDF)](MAP-3.pdf)
 
 # MAP – A Deterministic High-Frequency Trading Engine
 
