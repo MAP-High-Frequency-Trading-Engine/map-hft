@@ -1,6 +1,6 @@
-## 📄 Project Overview (PDF)
+##  Project Overview (PDF)
+[![Project PDF](https://img.shields.io/badge/View-PDF-blue)](MAP-3.pdf)
 
-[View the full project overview (PDF)](MAP-3.pdf)
 
 # MAP – A Deterministic High-Frequency Trading Engine
 
